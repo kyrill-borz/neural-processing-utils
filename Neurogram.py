@@ -1645,7 +1645,7 @@ class Recording:
 		# Raw signal
 		fig, ax = plt.subplots(3, 1, figsize=figsize)
 		#ax[0].plot(self.original.index, signal2plot['ch_%s'%ch], linewidth=0.5, zorder=0)
-		ax[0].plot(signal2plot.index, signal2plot['ch_%s'%ch], color='#aaa9a8', linewidth=0.5, zorder=0)
+		ax[0].plot(signal2plot["time"], signal2plot['ch_%s'%ch], color='#aaa9a8', linewidth=0.5, zorder=0)
 		ax[0].set_title('Sampling Frequency: {}Hz'.format(self.fs))
 		ax[0].set_xlabel('Time [s]')
 		ax[0].set_ylabel('Voltage [uV]')

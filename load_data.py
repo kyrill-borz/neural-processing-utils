@@ -10,6 +10,7 @@ from scipy import signal
 import glob
 import dask.dataframe as dd
 import dask.array as da
+import polars as pl
 
 from tkinter import Tk     # from tkinter import Tk for Python 3.x
 from tkinter.filedialog import askopenfile
@@ -1551,46 +1552,82 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
         else:
             if filepath.endswith('.pkl'):
                 neural = pd.read_pickle(filepath)
-            if filepath.endswith('.parquet'):
-                neural = pd.read_parquet(filepath)
-                print('---------------')
-                print(neural)
-                print('---------------')
-                
-            # Check the file is a data file
-            if neural.index.name == 'time':
-                # Set time interval
-                print(start)
-                if dur is None:
-                    stop = len(neural)
+                if neural.index.name == 'time':
+                    # Set time interval
+                    print(start)
+                    if dur is None:
+                        stop = len(neural)
+                    else:
+                        stop = int(start + dur)
+                    print('stop: %s' %stop)
+                    start = int(start)
+
+                    neural = neural.iloc[start:stop]
+
+                    # Get Sampling frequency
+                    fs = 1/(neural['seconds'].iloc[2]-neural['seconds'].iloc[1])
+                    print(fs)
+
+                    # Downcast it type float64 
+                    for col in neural.columns:
+                        if col.startswith('ch_'):
+                            neural[col] = neural[col].astype('float32')
+                            channels.append(col.replace('ch_', ''))
+                    print(channels)
+                    basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
+                    try: 
+                        information = pd.read_csv('%s/%sChannel_info_%s.csv' %(path, day, basename_without_ext))
+                        print(information)
+                    except:
+                        print('information not available')
+                        # Create empty dataframe with information for all channels
+                        information = pd.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
                 else:
-                    stop = int(start + dur)
-                print('stop: %s' %stop)
-                start = int(start)
+                    print('ERROR: You have selected a wrong file, try again')
+                    sys.exit()
 
-                neural = neural.iloc[start:stop]
+            if filepath.endswith('.parquet'):
+                neural = pl.read_parquet(filepath)
+                # neural = pd.read_parquet(filepath)
+                # print('---------------')
+                # print(neural)
+                # print('---------------')
+            # Check the file is a data file
+                if 'time' in neural.columns:
+                    # Set time interval
+                    print(start)
+                    if dur is None:
+                        stop = len(neural)
+                    else:
+                        stop = int(start + dur)
+                    print('stop: %s' %stop)
+                    start = int(start)
 
-                # Get Sampling frequency
-                fs = 1/(neural['seconds'].iloc[2]-neural['seconds'].iloc[1])
-                print(fs)
+                    neural = neural[start:stop]
 
-                # Downcast it type float64 
-                for col in neural.columns:
-                    if col.startswith('ch_'):
-                        neural[col] = neural[col].astype('float32')
-                        channels.append(col.replace('ch_', ''))
-                print(channels)
-                basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
-                try: 
-                    information = pd.read_csv('%s/%sChannel_info_%s.csv' %(path, day, basename_without_ext))
-                    print(information)
-                except:
-                    print('information not available')
-                    # Create empty dataframe with information for all channels
-                    information = pd.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
-            else:
-                print('ERROR: You have selected a wrong file, try again')
-                sys.exit()
+                    # Get Sampling frequency
+                    fs = 1/(neural['seconds'][2]-neural['seconds'][1])
+                    # print("sampling freq %s" %fs)
+
+                    # Downcast it type float64 
+                    # for col in neural.columns:
+                    #     if col.startswith('ch_'):
+                    #         neural = neural.with_columns(
+                    #             pl.col(col).cast(pl.Float32).alias(col)
+                    #         )
+                    #         channels.append(col.replace("ch_", ""))
+                    # print(channels)
+                    basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
+                    try: 
+                        information = pd.read_csv('%s/%sChannel_info_%s.csv' %(path, day, basename_without_ext))
+                        print(information)
+                    except:
+                        print('Channel Information not available')
+                        # Create empty dataframe with information for all channels
+                        information = pd.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
+                else:
+                    print('ERROR: You have selected a wrong file, try again')
+                    sys.exit()
     
     else:
         if load_multiple_files:
