@@ -5,6 +5,7 @@ import time
 import numpy as np
 import scipy as sp
 import pandas as pd
+import polars as pl
 import matplotlib.pyplot as plt 
 import warnings
 import pycwt as wavelet
@@ -74,11 +75,14 @@ def computeFastICA(X, n_components=None, random_state=0):
     A_ = icaTransformer.mixing_  # Get estimated mixing matrix
     return (S_, A_)
 
-def convertDfType(df, typeFloat='float16'):
-    for col in df.columns:
-        if col.startswith('ch_'):
-            df[col] = df[col].astype(typeFloat)
-    return df
+def convertDfType(df: pl.DataFrame, typeFloat: pl.Float32):
+    return df.with_columns(
+        [
+            pl.col(col).cast(typeFloat)
+            for col in df.columns
+            if col.startswith("ch_")
+        ]
+    )
 
 def peaks(v, **kwargs):
     """This method finds the peaks of a signal
