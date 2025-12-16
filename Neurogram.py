@@ -8,6 +8,7 @@ import pycwt
 import numpy as np
 import scipy as sp
 import pandas as pd
+import polars as pl
 import seaborn as sns
 import sklearn as sk
 import imageio
@@ -394,8 +395,58 @@ class Recording:
 			#self.recording[self.filter_ch] = signal.lfilter(b, a, self.recording[self.filter_ch])
 			#self.recording[self.filter_ch] = signal.sosfilt(sos, self.recording[self.filter_ch])
 			#----------------------------------
-			self.filtered = signal2filt.apply(lambda x: signal.sosfilt(sos, x)
-													if x.name in self.filter_ch else x)
+			
+			self.filtered = signal2filt.with_columns(
+				[
+					pl.col(col)
+					.map_batches(lambda s: signal.sosfilt(sos, s.to_numpy()))
+					.alias(col)
+					for col in self.filter_ch
+				]
+			)
+		elif filtername=='butter_lowpass':
+			print('Applying low pass butter')
+			# SOS filter used in gut, VN acute, and all analysis until Feb 2024. It's causal and therefore introduces a delay
+			#-----------------------------
+			# Configure butterworth filter
+			# https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.sosfilt.html#scipy.signal.sosfilt
+			#b, a = signal.butter(**kargs)
+			#w, h = signal.freqs(b, a)
+			#filt_config['butter']['Wn'] = fnorm(filt_config['W'], fs=record.fs).tolist() # The critical frequency or frequencies.
+								# Same as doing (filt_config['W']/(record.fs/2)).tolist()
+			#kargs['butter']['Wn'] = kargs['W']
+			print(kargs)
+			kargs['fs'] = self.fs
+			sos = signal.butter(**kargs, output='sos')  # Coefficients for SOS filter
+
+			# Filter signal: high pass (cutoff at 100Hz)
+			#----------------------------------------------
+			# Old filter
+			#self.recording[self.filter_ch] = signal.lfilter(b, a, self.recording[self.filter_ch])
+			#self.recording[self.filter_ch] = signal.sosfilt(sos, self.recording[self.filter_ch])
+			#----------------------------------
+			# self.filtered = signal2filt.with_columns(
+			# 	[
+			# 		pl.col(col)
+			# 		.map_batches(lambda s: signal.sosfilt(sos, s.to_numpy()))
+			# 		.alias(col)
+			# 		for col in self.filter_ch
+			# 	]
+			# )
+			self.filter_ch = ["ch_27"]
+			print(self.filter_ch)
+			df = signal2filt.select(self.filter_ch)
+
+			self.filtered = signal2filt.with_columns(
+				[
+					pl.Series(
+						name=col,
+						values=signal.sosfilt(sos, df[col].to_numpy())
+					)
+					for col in self.filter_ch
+				]
+			)
+			print(self.filtered)
 
 		elif filtername=='butter_non_causal':
 			#----------------------------------
