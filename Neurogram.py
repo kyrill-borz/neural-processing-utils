@@ -112,6 +112,7 @@ class Recording:
 		self.detect_method = []											
 		self.thresh_type = []	
 		self.channels = []
+		self.results=[]
 
 	@classmethod
 	def open_record(cls, path,start, dur=None, load_from_file=False, load_multiple_files=False, downsample=1, port='Port B', fileType='rhs', map_path=None, pig=False, day='', verbose=1):
@@ -354,7 +355,7 @@ class Recording:
 	# ---------------------------------------------------------------------------
 	# Filtering methods 
 	# ---------------------------------------------------------------------------
-	def filter(self, signal2filt,filtername, **kargs):
+	def filter(self, signal2filt,filtername, channels=['ch_27'], **kargs, ):
 		"""
 		Method to apply filtering to recordings (ENG)
 		Note that despite the whole dataframe is passed, the algorithm only applies to the selected channels (filter_ch)
@@ -433,7 +434,7 @@ class Recording:
 			# 		for col in self.filter_ch
 			# 	]
 			# )
-			self.filter_ch = ["ch_27"]
+			self.filter_ch = channels
 			print(self.filter_ch)
 			df = signal2filt.select(self.filter_ch)
 
@@ -1928,6 +1929,37 @@ class Recording:
 			# Remove files
 			for filename in set(filenames):
 				os.remove(filename)
+	
+	def apply_referencing(self, method: str):
+		"""
+		Apply referencing to self.filtered and store result in self.referenced
+		"""
+		signal = self.filtered
+
+		if method == "Median":
+			all_ch_list = self.filter_ch
+
+			ref = signal.select(
+				pl.concat_list(all_ch_list).list.median().alias("ref")
+			)["ref"]
+
+			self.referenced = signal.with_columns(
+				[(pl.col(col) - ref).alias(col) for col in all_ch_list]
+			)
+
+		elif method == "Mean":
+			all_ch_list = self.filter_ch
+
+			ref = signal.select(
+				pl.concat_list(all_ch_list).list.mean().alias("ref")
+			)["ref"]
+
+			self.referenced = signal.with_columns(
+				[(pl.col(col) - ref).alias(col) for col in all_ch_list]
+			)
+
+		else:
+			raise NotImplementedError(f"Referencing method '{method}' not implemented")
 	
 
 class MyWaveforms:
