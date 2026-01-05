@@ -1499,12 +1499,14 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
 
     # Open GUI for selecting file
     Tk().withdraw()  # keep the root window from appearing
-    print(path)
     # If data has been previously stored
     if load_from_file:
-        filepath = askopenfile(initialdir=path, title="Select previously stored data file", 
+        if path == None:
+            filepath = askopenfile(initialdir=path, title="Select previously stored data file", 
                                 filetypes=[("recording", ".csv .pkl .parquet")])
-        filepath = filepath.name
+            filepath = filepath.name
+        else:
+            filepath = path
         print('Loading from file %s' %filepath)
         channels = []
         # Load from csv: computationally expensive

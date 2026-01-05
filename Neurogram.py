@@ -371,12 +371,12 @@ class Recording:
 		self.filtered: [dataframe] updare the recording object with a parameter that is a dataframe with the results of the filtering
 
 		"""
-		if filtername=='None':
+		if filtername=='No Filter':
 			self.filtered = self.recording
 			print('No filter applied!')
 			pass
-		elif filtername=='butter':
-			print('Applying butter')
+		elif filtername=='Butterworth':
+			print('Applying Butterworth bandpass')
 			# SOS filter used in gut, VN acute, and all analysis until Feb 2024. It's causal and therefore introduces a delay
 			#-----------------------------
 			# Configure butterworth filter
@@ -405,7 +405,7 @@ class Recording:
 					for col in self.filter_ch
 				]
 			)
-		elif filtername=='butter_lowpass':
+		elif filtername=='Lowpass':
 			print('Applying low pass butter')
 			# SOS filter used in gut, VN acute, and all analysis until Feb 2024. It's causal and therefore introduces a delay
 			#-----------------------------
@@ -1938,7 +1938,7 @@ class Recording:
 
 		if method == "Median":
 			all_ch_list = self.filter_ch
-
+			print(all_ch_list)
 			ref = signal.select(
 				pl.concat_list(all_ch_list).list.median().alias("ref")
 			)["ref"]
