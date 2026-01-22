@@ -12,6 +12,7 @@ import polars as pl
 import seaborn as sns
 import sklearn as sk
 import imageio
+import itertools
 import scipy.io
 from sklearn.decomposition import PCA, FastICA
 from sklearn.manifold import TSNE
@@ -1929,7 +1930,114 @@ class Recording:
 			# Remove files
 			for filename in set(filenames):
 				os.remove(filename)
-	
+
+	def bipolar_referencing_polars(signal: pl.DataFrame, filter_ch: list[str]) -> pl.DataFrame:
+		"""
+		Compute all-pairs bipolar referencing using Polars.
+
+		Parameters
+		----------
+		signal : pl.DataFrame
+			Filtered signal data (time × channels)
+		filter_ch : list[str]
+			List of channel column names (e.g. ['ch_4', 'ch_11', 'ch_20'])
+
+		Returns
+		-------
+		pl.DataFrame
+			Bipolar-referenced signals with columns 'ch_i-ch_j'
+		"""
+
+		# Ensure channel list is clean and ordered
+		all_ch_list = [ch for ch in filter_ch if ch in signal.columns]
+
+		if len(all_ch_list) < 2:
+			raise ValueError("Bipolar referencing requires at least two channels")
+
+		# Generate all possible bipolar pairs (same as itertools.combinations)
+		bipolar_pairs = list(itertools.combinations(all_ch_list, 2))
+
+		# Build Polars expressions for each bipolar pair
+		bipolar_exprs = [
+			(pl.col(ch1) - pl.col(ch2)).alias(f"{ch1}-{ch2}")
+			for ch1, ch2 in bipolar_pairs
+		]
+
+		# Select only the bipolar-referenced signals
+		references_df = signal.select(bipolar_exprs)
+
+		print(f"Bipolar references computed: {references_df.shape}")
+		print("Bipolar channels:", references_df.columns)
+
+		return references_df
+
+	def tripolar_referencing_polars(
+		signal: pl.DataFrame,
+		filter_ch: list[str],
+		offset: int = 1,
+	) -> pl.DataFrame:
+		"""
+		Compute tripolar referencing using Polars.
+
+		Tripolar formula:
+			2 * center - (proximal + distal)
+
+		Parameters
+		----------
+		signal : pl.DataFrame
+			Filtered signal (time × channels)
+		filter_ch : list[str]
+			Ordered list of channel names
+		offset : int
+			Neighbor distance (1 = immediate neighbors)
+
+		Returns
+		-------
+		pl.DataFrame
+			Tripolar-referenced signals
+		"""
+
+		if offset < 1:
+			raise ValueError("Offset must be >= 1")
+
+		if len(filter_ch) < 2 * offset + 1:
+			raise ValueError(
+				"Not enough channels for tripolar referencing "
+				f"(need ≥ {2 * offset + 1})"
+			)
+
+		tripolar_exprs = []
+		tripolar_labels = {}
+
+		for i in range(offset, len(filter_ch) - offset):
+			center = filter_ch[i]
+			proximal = filter_ch[i - offset]
+			distal = filter_ch[i + offset]
+
+			col_name = f"{center}_tripolar_o{offset}"
+			label = f"2×{center} - ({proximal} + {distal})"
+
+			tripolar_exprs.append(
+				(
+					2 * pl.col(center)
+					- (pl.col(proximal) + pl.col(distal))
+				).alias(col_name)
+			)
+
+			tripolar_labels[col_name] = label
+
+		references_df = signal.select(tripolar_exprs)
+
+		# Attach labels as metadata (Polars equivalent of pandas .attrs)
+		references_df = references_df.with_columns(
+			[pl.lit(label).alias(f"{name}__label") for name, label in tripolar_labels.items()]
+		).drop([c for c in references_df.columns if c.endswith("__label")])
+
+		print(f"Tripolar referencing computed with offset = {offset}")
+		print(tripolar_labels)
+
+		return references_df
+
 	def apply_referencing(self, method: str):
 		"""
 		Apply referencing to self.filtered and store result in self.referenced
@@ -1957,7 +2065,14 @@ class Recording:
 			self.referenced = signal.with_columns(
 				[(pl.col(col) - ref).alias(col) for col in all_ch_list]
 			)
-
+		elif method == "Bipolar":
+			self.referenced = self.bipolar_referencing_polars(
+				self.filtered, self.filter_ch
+			)
+		elif method == "Tripolar":
+			self.referenced = self.tripolar_referencing_polars(
+				self.filtered, self.filter_ch, offset=1
+			)
 		else:
 			raise NotImplementedError(f"Referencing method '{method}' not implemented")
 	
