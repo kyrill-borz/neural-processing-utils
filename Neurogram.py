@@ -1931,7 +1931,7 @@ class Recording:
 			for filename in set(filenames):
 				os.remove(filename)
 
-	def bipolar_referencing_polars(signal: pl.DataFrame, filter_ch: list[str]) -> pl.DataFrame:
+	def bipolar_referencing_polars(self, signal: pl.DataFrame, filter_ch: list[str]) -> pl.DataFrame:
 		"""
 		Compute all-pairs bipolar referencing using Polars.
 
@@ -1972,6 +1972,7 @@ class Recording:
 		return references_df
 
 	def tripolar_referencing_polars(
+		self,
 		signal: pl.DataFrame,
 		filter_ch: list[str],
 		offset: int = 1,
