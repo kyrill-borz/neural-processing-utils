@@ -34,6 +34,7 @@ from sklearn import preprocessing
 from matplotlib.colors import ListedColormap
 import matplotlib.dates as md
 
+
 import dask.dataframe as dd
 
 
@@ -42,6 +43,7 @@ import dask.dataframe as dd
 
 # Scipy
 from scipy import signal
+from scipy.signal import find_peaks
 from scipy import ndimage
 
 # TKinter for selecting files
@@ -70,6 +72,12 @@ from matplotlib.ticker import FuncFormatter
 
 def hide_tick_labels(value, pos):
 		return ""
+
+class SpikeResult:
+    channel: str
+    indices: np.ndarray
+    times: np.ndarray
+    waveforms: np.ndarray | None = None
 
 class Recording:
 	"""Class for pre-processing and extracting spikes and HR from electroneurograms (ENG)"""
@@ -2077,7 +2085,154 @@ class Recording:
 		else:
 			raise NotImplementedError(f"Referencing method '{method}' not implemented")
 	
+	def detect_spikes_single_channel_polars(
+        self,
+        channel: str,
+        height_std: float = 4.0,
+        min_distance_ms: float = 3.0,
+        use_referenced: bool = True,
+    ):
+		"""
+		Detect spikes on a single channel using Polars storage.
+		"""
 
+		df = self.referenced if use_referenced and self.referenced is not None else self.filtered
+
+		if channel not in df.columns:
+			raise KeyError(f"Channel {channel} not found")
+
+		# Polars → NumPy boundary (unavoidable)
+		signal = df.select(channel).to_numpy().ravel()
+
+		threshold = height_std * signal.std()
+		min_distance = int(min_distance_ms / 1000 * self.fs)
+
+		indices, _ = find_peaks(
+			signal,
+			height=threshold,
+			distance=min_distance,
+		)
+
+		times = indices / self.fs
+
+		return {
+			"channel": channel,
+			"indices": indices,
+			"times": times,
+		}
+	
+	def extract_spike_waveforms_polars(
+        self,
+        channel: str,
+        spike_indices: np.ndarray,
+        window_ms: float = 2.0,
+        use_referenced: bool = True,
+		) -> np.ndarray:
+		"""
+			Extract spike waveforms using Polars-backed signal.
+		"""
+
+		df = self.referenced if use_referenced and self.referenced is not None else self.filtered
+
+		signal = df.select(channel).to_numpy().ravel()
+
+		window = int(window_ms / 1000 * self.fs)
+		waveforms = []
+
+		for idx in spike_indices:
+			start = max(0, idx - window)
+			end = min(len(signal), idx + window)
+
+			wf = signal[start:end]
+
+			if len(wf) < 2 * window:
+				pad_left = window - (idx - start)
+				pad_right = window - (end - idx)
+				wf = np.pad(wf, (pad_left, pad_right))
+
+			waveforms.append(wf)
+
+		return np.asarray(waveforms)
+	
+	def compute_average_waveform_polars(self, waveforms: np.ndarray):
+		"""
+		Compute mean and std waveform.
+		"""
+
+		wf_df = pl.DataFrame(waveforms)
+
+		mean_wf = wf_df.mean().to_numpy().ravel()
+		std_wf = wf_df.std().to_numpy().ravel()
+
+		return mean_wf, std_wf
+	
+	def compute_spike_durations(
+        self,
+        waveforms: np.ndarray,
+    ) -> np.ndarray:
+		"""
+		Compute spike durations in samples.
+		"""
+
+		durations = []
+
+		for wf in waveforms:
+			max_val = wf.max()
+			th10 = 0.1 * max_val
+			th90 = 0.9 * max_val
+
+			duration = np.sum(wf > th10) - np.sum(wf > th90)
+			durations.append(duration)
+
+		return np.asarray(durations)
+	
+	def compute_isi_polars(self, spike_times_s: np.ndarray) -> pl.Series:
+		"""
+		Compute ISI in milliseconds using Polars.
+		"""
+
+		return (
+			(pl.Series(spike_times_s)
+			.diff() * 1000)
+			.drop_nulls()
+		)
+
+	def single_channel_spike_analysis_polars(
+        self,
+        channel: str,
+        height_std: float = 4.0,
+        min_distance_ms: float = 3.0,
+        extract_waveforms: bool = True,
+    ):
+		"""
+		Complete single-channel spike analysis.
+		"""
+
+		result = self.detect_spikes_single_channel_polars(
+			channel=channel,
+			height_std=height_std,
+			min_distance_ms=min_distance_ms,
+		)
+
+		if extract_waveforms:
+			waveforms = self.extract_spike_waveforms_polars(
+				channel=channel,
+				spike_indices=result["indices"],
+			)
+
+			mean_wf, std_wf = self.compute_average_waveform_polars(waveforms)
+			durations = self.compute_spike_durations(waveforms)
+			isi = self.compute_isi_polars(result["times"])
+
+			result.update({
+				"waveforms": waveforms,
+				"mean_waveform": mean_wf,
+				"std_waveform": std_wf,
+				"durations_samples": durations,
+				"isi_ms": isi,
+			})
+
+		return result
 class MyWaveforms:
 	def __init__(self, waveforms, recording, fs, spikes_vector_loc, num_clusters, path):
 		"""
