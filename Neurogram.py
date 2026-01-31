@@ -2086,40 +2086,47 @@ class Recording:
 			raise NotImplementedError(f"Referencing method '{method}' not implemented")
 	
 	def detect_spikes_single_channel_polars(
-        self,
-        channel: str,
-        height_std: float = 4.0,
-        min_distance_ms: float = 3.0,
-        use_referenced: bool = True,
-    ):
-		"""
-		Detect spikes on a single channel using Polars storage.
-		"""
+		self,
+		channel: str,
+		height_std: float = 4.0,
+		min_distance_ms: float = 3.0,
+		):
+			"""
+			Detect spikes on a single channel using threshold + distance.
+			Returns indices, times (s), and peak amplitudes.
+			"""
 
-		df = self.referenced if use_referenced and self.referenced is not None else self.filtered
+			fs = self.fs
+			signal = self.filtered[channel].to_numpy()
 
-		if channel not in df.columns:
-			raise KeyError(f"Channel {channel} not found")
+			# Threshold
+			threshold = height_std * signal.std()
 
-		# Polars → NumPy boundary (unavoidable)
-		signal = df.select(channel).to_numpy().ravel()
+			# Minimum distance in samples
+			min_distance_samples = int(min_distance_ms / 1000 * fs)
 
-		threshold = height_std * signal.std()
-		min_distance = int(min_distance_ms / 1000 * self.fs)
+			# Detect peaks
+			from scipy.signal import find_peaks
+			indices, properties = find_peaks(
+				signal,
+				height=threshold,
+				distance=min_distance_samples,
+			)
 
-		indices, _ = find_peaks(
-			signal,
-			height=threshold,
-			distance=min_distance,
-		)
+			indices = pl.Series("indices", indices, dtype=pl.Int64)
 
-		times = indices / self.fs
+			# Spike times (seconds)
+			times = indices.cast(pl.Float64) / fs
 
-		return {
-			"channel": channel,
-			"indices": indices,
-			"times": times,
-		}
+			# Spike peak amplitudes
+			peaks = pl.Series("peaks", signal[indices.to_numpy()])
+
+			return {
+				"indices": indices,
+				"times": times,
+				"peaks": peaks,
+				"threshold": threshold,
+			}
 	
 	def extract_spike_waveforms_polars(
         self,
@@ -2231,8 +2238,29 @@ class Recording:
 				"durations_samples": durations,
 				"isi_ms": isi,
 			})
-
-		return result
+		return {
+			"title": f"Spike Analysis – {channel}",
+			"plots": [
+				{
+					"title": "Detected Spikes",
+					"x": result["times"],
+					"y": result["peaks"],
+					"kind": "scatter",
+				},
+				{
+					"title": "Average Spike Waveform",
+					"x": np.arange(len(mean_wf)),
+					"y": mean_wf,
+					"kind": "line",
+				},
+				{
+					"title": "ISI Histogram",
+					"x": None,
+					"y": result["isi_ms"],
+					"kind": "hist",
+				},
+			],
+		}
 class MyWaveforms:
 	def __init__(self, waveforms, recording, fs, spikes_vector_loc, num_clusters, path):
 		"""
