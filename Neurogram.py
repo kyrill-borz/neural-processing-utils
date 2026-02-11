@@ -69,6 +69,7 @@ from utils import *
 # from processing.filter import FIR_smooth
 # from visualization.SC_topo import *
 from matplotlib.ticker import FuncFormatter
+from utils.autofilter import adaptive_filter
 
 def hide_tick_labels(value, pos):
 		return ""
@@ -384,6 +385,16 @@ class Recording:
 			self.filtered = self.recording
 			print('No filter applied!')
 			pass
+		elif filtername=="Automatic":
+			
+			print('Applying automatic filter selection')
+			self.filtered, metadata = adaptive_filter(
+				self.original,
+				fs=self.fs,
+				channels=self.filter_ch
+			)
+			
+
 		elif filtername=='Butterworth':
 			print('Applying Butterworth bandpass')
 			# SOS filter used in gut, VN acute, and all analysis until Feb 2024. It's causal and therefore introduces a delay
@@ -1766,6 +1777,70 @@ class Recording:
 		else:
 			print('Plot will not show')
 			plt.close()
+
+	def compute_frequency_content(
+		self,
+		signal_1d: np.ndarray,
+		fs: float,
+		nperseg: int = 512,
+		max_freq: float | None = None,
+	):
+		"""
+		Compute frequency-domain representations of a 1D neural signal.
+
+		Parameters
+		----------
+		signal_1d : np.ndarray
+			Raw or filtered signal (1D).
+		fs : float
+			Sampling frequency in Hz.
+		nperseg : int
+			FFT window size.
+		max_freq : float | None
+			Optional frequency cutoff.
+
+		Returns
+		-------
+		dict
+			PSD and spectrogram components for GUI plotting.
+		"""
+
+		# --- PSD (Welch) ---
+		psd_freqs, psd = signal.welch(
+			signal_1d,
+			fs=fs,
+			nperseg=nperseg,
+		)
+
+		if max_freq is not None:
+			mask = psd_freqs <= max_freq
+			psd_freqs = psd_freqs[mask]
+			psd = psd[mask]
+
+		# --- Spectrogram ---
+		spec_freqs, spec_times, spec_power = signal.spectrogram(
+			signal_1d,
+			fs=fs,
+			nperseg=nperseg,
+			scaling="density",
+			mode="psd",
+		)
+
+		# Convert to dB (match matplotlib specgram behavior)
+		spec_power_db = 10 * np.log10(spec_power + np.finfo(float).eps)
+
+		if max_freq is not None:
+			fmask = spec_freqs <= max_freq
+			spec_freqs = spec_freqs[fmask]
+			spec_power_db = spec_power_db[fmask, :]
+
+		return {
+			"psd_freqs": psd_freqs,
+			"psd": psd,
+			"spec_freqs": spec_freqs,
+			"spec_times": spec_times,
+			"spec_power_db": spec_power_db,
+		}
 
 	def plot_identified_peaks(self, signal, axes, spikes_idx,spikes_vector_ampl, neural_component, cardiac_signal, noise_idx, noise_ampl_vector,index_first_edge,num_rows, num_columns, dtformat='%M:%S.%f', verbose=False): 
 		"""
