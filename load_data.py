@@ -11,10 +11,11 @@ import glob
 import dask.dataframe as dd
 import dask.array as da
 import polars as pl
-
+from pathlib import Path
 from tkinter import Tk     # from tkinter import Tk for Python 3.x
 from tkinter.filedialog import askopenfile
 
+from utils.load_intan_rhs_format.load_intan_rhs_format import read_rhs_data
 #sys.path.append('C:/Users/amparo.guemesg/Documents/pyneural/pyNeural/datasets')
 sys.path.append('../datasets')
 
@@ -1500,6 +1501,11 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
     # Open GUI for selecting file
     Tk().withdraw()  # keep the root window from appearing
     # If data has been previously stored
+    if fileType == 'rhs':
+        time_key = 't'
+    else:
+        time_key = 't_amplifier'
+        
     if load_from_file:
         if path == None:
             filepath = askopenfile(initialdir=path, title="Select previously stored data file", 
@@ -1509,6 +1515,7 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
             filepath = path
         print('Loading from file %s' %filepath)
         channels = []
+
         # Load from csv: computationally expensive
         if filepath.endswith('.csv'):
             neural = pd.read_csv(filepath)
@@ -1646,12 +1653,12 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
             for count,file in enumerate(files):
                 print(count)
                 if fileType == 'rhs':
-                    from load_intan_rhs_format.load_intan_rhs_format import read_data
-                    data = read_data(file, verbose=verbose)
-                else: 
-                    file = file.replace("\\", "/" )
-                    from load_intan_rhd_format.load_intan_rhd_format import read_data
-                    data = read_data(file) #'C:/Users/ampar/OneDrive - University of Cambridge/4. pyNeural/datasets/pisa/pigs/2023_02_07_pig/record_230207_142309/record_230207_142309.rhd')
+                    print('Loading rhs files from %s' %file)
+                    data = read_rhs_data(file, verbose=verbose)
+                # else: 
+                #     file = file.replace("\\", "/" )
+                #     from load_intan_rhd_format.load_intan_rhd_format import read_data
+                #     data = read_data(file) #'C:/Users/ampar/OneDrive - University of Cambridge/4. pyNeural/datasets/pisa/pigs/2023_02_07_pig/record_230207_142309/record_230207_142309.rhd')
                 if verbose:
                     print(data)
                 # Sampling frequency 
@@ -1665,17 +1672,14 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
                     new_amp_data = new_amp_data[::downsample]
                     # Transpose data to have channels as columns
                     amp_data.append(new_amp_data)
-                    if fileType == 'rhs':
-                        new_time = data['t'].transpose()
-                    else: 
-                        new_time = data['t_amplifier'].transpose() 
+                    new_time = data[time_key].transpose() 
                     new_time = new_time[::downsample]       #start:stop:step
                     time.append(new_time)
                 else:
                     new_amp_data = data['amplifier_data']
                     new_amp_data = new_amp_data[::downsample]
                     amp_data.append(new_amp_data)
-                    new_time = data['t'].transpose()
+                    new_time = data[time_key].transpose()
                     new_time = new_time[::downsample]       #start:stop:step
                     time.append(new_time)
             amp_data = np.concatenate(amp_data, axis=0)
@@ -1699,9 +1703,8 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
                 # Extract only value from nested array
                 fs = fs[0][0]
             elif filepath_init.endswith('.rhs'):
-                from load_intan_rhs_format.load_intan_rhs_format import read_data
                 #print('Loading rhs files from %s' %filepath_init)
-                data = read_data(filepath_init,verbose=verbose)
+                data = read_rhs_data(filepath_init,verbose=verbose)
                 # Sampling frequency 
                 print(data['frequency_parameters'])
                 fs = data['frequency_parameters']['amplifier_sample_rate']
@@ -1713,12 +1716,12 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
                 # Transpose data to have channels as columns
                 amp_data = data['amplifier_data'].transpose()
                 amp_data = amp_data[::downsample]
-                time = data['t'].transpose()
+                time = data[time_key].transpose()
                 time = time[::downsample]       #start:stop:step
             else:
                 amp_data = data['amplifier_data']
                 amp_data = amp_data[::downsample]
-                time = data['t']
+                time = data[time_key]
                 time = time[::downsample]       #start:stop:step
             basename_without_ext = os.path.splitext(os.path.basename(filepath_init))[0]
 
@@ -1736,79 +1739,95 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
             stop = len(amp_data)
         else:
             stop = int(start + dur)
+
         start = int(start)
 
+        amp_data = amp_data[start:stop]
+        time = time[start:stop]
+
+        fs = fs / downsample
         # Create dataframe to store voltage data
-        neural = pd.DataFrame() 
+        neural = pl.DataFrame() 
 
         # Create dataframe with information for all channels
-        information = pd.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
+        information = pl.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
 
-        # Add column names
-        columns = []
+        channels_info = data.get('amplifier_channels', [])
+
+        selected_indices = []
+        column_names = []
         intan_ch = []
         Z_magnitude = []
         Z_phase = []
-        
-        for i, el in enumerate(data['amplifier_channels']):
-            # data['amplifier_channels'] contains info as in this example:
-            # {'port_name': 'Port A', 'port_prefix': 'A', 'port_number': 1, 'native_channel_name': 'A-030', 'custom_channel_name': 'A-030', 
-            # 'native_order': 30, 'custom_order': 30, 'chip_channel': 14, 'board_stream': 1, 'electrode_impedance_magnitude': 6839.2158203125, 
-            # 'electrode_impedance_phase': -59.66900634765625}   
+
+        for i, el in enumerate(channels_info):
             if el['port_name'] == port:
-                intan_ch.append(el['native_order'])             # Array of ints with the number of the intan available channels
-                Z_magnitude.append(el['electrode_impedance_magnitude']/1000)    # KOhms
+                selected_indices.append(i)
+                ch_name = f"ch_{el['native_order']}"
+                column_names.append(ch_name)
+
+                intan_ch.append(el['native_order'])
+                Z_magnitude.append(el['electrode_impedance_magnitude'] / 1000)
                 Z_phase.append(el['electrode_impedance_phase'])
-                columns.append('ch_%s' %(el['native_order']))   # Array of strings with available intan channels in the format 'ch_x'
-                neural['ch_%s' %(el['native_order'])] = amp_data[:,i]
 
-        # Save information data
-        information['ch_string'] = columns
-        information['intan_ch'] = intan_ch
-        information['Z_magnitude Kohms'] = Z_magnitude
-        information['Z_phase'] = Z_phase
-        print(information)
-        #print(columns)
-        #print(intan_ch)
-        #print(Z_magnitude)
+        # Extract only selected channels
+        amp_selected = amp_data[:, selected_indices]
 
+        # Build dict for Polars
+        data_dict = {
+            column_names[i]: amp_selected[:, i].astype("float32")
+            for i in range(len(column_names))
+        }
+
+        # Add time column (convert seconds → datetime ns)
+        data_dict["time"] = (time * 1e9).astype("int64")
+
+        neural = pl.DataFrame(data_dict)
+
+        # Convert to proper Datetime type
+        neural = neural.with_columns(
+            pl.col("time").cast(pl.Datetime("ns"))
+        )
+
+        # -------------------------------------------------
+        # Save Parquet
+        # -------------------------------------------------
+        p = Path(filepath_init)
+
+        basename_without_ext = p.stem          # "recording"
+        parent_dir = p.parent                  # directory path
+        subfolder = parent_dir / basename_without_ext
+        subfolder.mkdir(parents=True, exist_ok=True)
+
+        output_path = subfolder/ f"{basename_without_ext}_{port}.parquet"
+
+        print(f"Saving data into: {output_path}")
+        neural.write_parquet(output_path)
+
+        # -------------------------------------------------
+        # Channel Information (Polars)
+        # -------------------------------------------------
+        information = pl.DataFrame({
+            "ch_string": column_names,
+            "intan_ch": intan_ch,
+            "Z_magnitude_KOhms": Z_magnitude,
+            "Z_phase": Z_phase,
+        })
+
+        info_path = subfolder / f"{day}Channel_info_{basename_without_ext}_{port}.csv"
         
-        # Create dataframe
-        #neural = pd.DataFrame(data=amp_data[, columns=columns) #[:,intan_ch]
-        neural['seconds'] = time
-            
-        neural = neural.iloc[start:stop]
 
-        # Downcast
-        for col in neural.columns:
-            if col.startswith('ch_'):
-                neural[col] = neural[col].astype('float32')
+        information.write_csv(info_path)
 
-        # Set datetime index
-        neural.index = pd.DatetimeIndex(neural.seconds * 1e9)
-        neural.index.name = 'time'        
-
-        # To avoid loading the data and creating the dataframe every time save it as csv 
-        #print('Saving data into: %s/%s.csv' %(path, basename_without_ext))
-        #neural.to_csv(r'%s/%s.csv' %(path, basename_without_ext))
-
-        print('Saving data into: %s/%s_%s' %(path, basename_without_ext,port))
-        #neural.to_pickle(r'%s/%s_%s.pkl' %(path, basename_without_ext, port))
-        neural.to_parquet(r'%s/%s_%s.parquet' %(path, basename_without_ext, port), index=True)
-
-        information.to_csv(r'%s/%sChannel_info_%s_%s.csv' %(path, day, basename_without_ext, port))
-
-        if day != '':
-            path_rat = os.path.join(os.path.dirname(os.path.dirname(path)))
-            print('Saving impedance per day into: %s' %path_rat)
+        # -------------------------------------------------
+        # Optional impedance saving
+        # -------------------------------------------------
+        if day != "":
+            path_rat = os.path.dirname(os.path.dirname(path))
+            print(f"Saving impedance per day into: {path_rat}")
             save_impedance_data(intan_ch, Z_magnitude, day, path_rat)
 
-        #Z_magnitude.to_csv(r'%s/Z_magn_%s_%s.csv' %(path, basename_without_ext, port))      
-        #Z_phase.to_csv(r'%s/Z_phase_%s_%s.csv' %(path, basename_without_ext, port)) 
-
-    # Return
-    return neural, fs, basename_without_ext, information #intan_ch, Z_magnitude, Z_phase
-
+    return neural, fs, basename_without_ext, information
 
 def load_all_ports_rhs(path,fileType='rhs', downsample=1,verbose=1):
     """
@@ -1835,7 +1854,7 @@ def load_all_ports_rhs(path,fileType='rhs', downsample=1,verbose=1):
     # Loop through each file
     for count, file in enumerate(files):
         print(f"Loading file {count+1}/{len(files)}: {file}")
-        data = read_data(file, verbose=verbose)
+        data = read_rhs_data(file, verbose=verbose)
         
         # Sampling frequency (assume constant)
         if fs is None:

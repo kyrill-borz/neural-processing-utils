@@ -6,6 +6,8 @@ import time
 import datetime
 import pycwt
 import numpy as np
+from scipy.stats import ks_2samp, expon
+import numpy as np
 import scipy as sp
 import pandas as pd
 import polars as pl
@@ -33,7 +35,7 @@ from sklearn import preprocessing
 # Import listed colormap
 from matplotlib.colors import ListedColormap
 import matplotlib.dates as md
-
+from pathlib import Path
 
 import dask.dataframe as dd
 
@@ -125,7 +127,7 @@ class Recording:
 		self.results=[]
 
 	@classmethod
-	def open_record(cls, path,start, dur=None, load_from_file=False, load_multiple_files=False, downsample=1, port='Port B', fileType='rhs', map_path=None, pig=False, day='', verbose=1):
+	def open_record(cls, path,start, dur=None, load_multiple_files=False, downsample=1, port='Port B', map_path=None, pig=False, day='', verbose=1):
 		"""
 		Called by constructor method to load neural recordings and electrode map 
 		
@@ -164,6 +166,12 @@ class Recording:
 			basename_without_ext = port
 			 
 		else:
+			fileType = Path(path).suffix.lower().replace('.', '')
+			if fileType in ['rhs', 'mat']:
+				load_from_file = False
+			else:
+				load_from_file = True
+			print("open record")
 			neural,fs, basename_without_ext, information = load_data_multich(path, start=start, dur=dur, port=port,  #intan_ch, Z_magnitude, Z_phase 
 												load_from_file=load_from_file,
 												load_multiple_files=load_multiple_files,
@@ -1928,6 +1936,77 @@ class Recording:
 		axes.xaxis.set_ticks_position('bottom')
 		axes.xaxis.set_major_formatter(md.DateFormatter(dtformat))
 
+	def compute_isi_distribution_over_time(
+		self,
+		spike_times_ms: np.ndarray,
+		window_seconds: float = 10.0,
+		isi_range_ms: int = 20,
+		bin_size_ms: float = 1.0,
+		perform_ks_test: bool = True,
+	):
+		"""
+		Compute windowed ISI distribution matrix and optional Poisson KS test.
+
+		Returns
+		-------
+		dict with:
+			- isi_matrix (2D array)
+			- window_centers_sec
+			- isi_bins_ms
+			- ks_stat (optional)
+			- ks_p (optional)
+		"""
+
+		if len(spike_times_ms) < 2:
+			raise ValueError("Not enough spikes to compute ISI.")
+
+		window_period = window_seconds * 1000
+		max_time = spike_times_ms[-1]
+
+		windows = np.arange(0, max_time, window_period)
+
+		isi_windows = []
+		window_centers = []
+
+		for start in windows:
+			end = start + window_period
+			mask = (spike_times_ms >= start) & (spike_times_ms < end)
+			spikes_in_window = spike_times_ms[mask]
+
+			if len(spikes_in_window) > 1:
+				isi = np.diff(spikes_in_window)
+				isi_windows.append(isi)
+				window_centers.append(start + window_period / 2)
+
+		# Histogram bins
+		bins = np.arange(0, isi_range_ms + bin_size_ms, bin_size_ms)
+
+		isi_matrix = np.zeros((len(isi_windows), len(bins) - 1))
+
+		for i, isi in enumerate(isi_windows):
+			hist, _ = np.histogram(isi, bins=bins)
+			isi_matrix[i, :] = hist
+
+		result = {
+			"isi_matrix": isi_matrix,
+			"window_centers_sec": np.array(window_centers) / 1000,
+			"isi_bins_ms": bins[:-1],
+		}
+
+		# Optional KS test on full ISI distribution
+		if perform_ks_test:
+			full_isi = np.diff(spike_times_ms)
+
+			lambda_rate = 1 / np.mean(full_isi)
+			simulated_isi = expon.rvs(scale=1 / lambda_rate, size=len(full_isi))
+
+			ks_stat, ks_p = ks_2samp(full_isi, simulated_isi)
+
+			result["ks_stat"] = ks_stat
+			result["ks_p"] = ks_p
+
+		return result
+
 	def gif(self, dataframe, topo_plot, samples, normalize=True, path='', make_contour=False, 
 			plot_channels=True, plot_clabels=False, INTERP_POINTS=1000, show_plot=False, 
 			make_gif=False, bar_title='Voltage [uV]'):
@@ -2157,6 +2236,8 @@ class Recording:
 			self.referenced = self.tripolar_referencing_polars(
 				self.filtered, self.filter_ch, offset=1
 			)
+		elif method == "No Referencing":
+			self.referenced = self.filtered
 		else:
 			raise NotImplementedError(f"Referencing method '{method}' not implemented")
 	
@@ -2242,7 +2323,6 @@ class Recording:
 		"""
 
 		wf_df = pl.DataFrame(waveforms)
-
 		mean_wf = wf_df.mean().to_numpy().ravel()
 		std_wf = wf_df.std().to_numpy().ravel()
 
