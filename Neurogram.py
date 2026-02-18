@@ -2360,14 +2360,15 @@ class Recording:
 		)
 
 	def single_channel_spike_analysis_polars(
-        self,
-        channel: str,
-        height_std: float = 4.0,
-        min_distance_ms: float = 3.0,
-        extract_waveforms: bool = True,
-    ):
+		self,
+		channel: str,
+		height_std: float = 4.0,
+		min_distance_ms: float = 3.0,
+		extract_waveforms: bool = True,
+	):
 		"""
 		Complete single-channel spike analysis.
+		Returns pure data only (no plotting instructions).
 		"""
 
 		result = self.detect_spikes_single_channel_polars(
@@ -2375,6 +2376,17 @@ class Recording:
 			height_std=height_std,
 			min_distance_ms=min_distance_ms,
 		)
+
+		# Defensive: no spikes detected
+		if len(result["indices"]) == 0:
+			result.update({
+				"waveforms": None,
+				"mean_waveform": None,
+				"std_waveform": None,
+				"durations_samples": None,
+				"isi_ms": None,
+			})
+			return result
 
 		if extract_waveforms:
 			waveforms = self.extract_spike_waveforms_polars(
@@ -2393,28 +2405,65 @@ class Recording:
 				"durations_samples": durations,
 				"isi_ms": isi,
 			})
+
+		return result
+	def cluster_spike_waveforms(
+		self,
+		waveforms: np.ndarray,
+		spike_times_sec: np.ndarray,
+		n_clusters: int = 2,
+	):
+		"""
+		Cluster spike waveforms using simple feature-based KMeans.
+
+		Returns
+		-------
+		dict with:
+			labels
+			features
+			cluster_means
+			cluster_isi
+		"""
+
+		if waveforms is None or len(waveforms) == 0:
+			raise ValueError("No waveforms available for clustering.")
+
+		# ----- Feature extraction -----
+		peak_to_peak = np.max(waveforms, axis=1) - np.min(waveforms, axis=1)
+		energy = np.sum(waveforms ** 2, axis=1)
+
+		features = np.column_stack((peak_to_peak, energy))
+		features = StandardScaler().fit_transform(features)
+
+		# ----- KMeans -----
+		kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+		labels = kmeans.fit_predict(features)
+
+		# ----- Cluster means -----
+		cluster_means = []
+		cluster_isi = []
+
+		for i in range(n_clusters):
+			cluster_waveforms = waveforms[labels == i]
+
+			if len(cluster_waveforms) > 0:
+				cluster_means.append(np.mean(cluster_waveforms, axis=0))
+			else:
+				cluster_means.append(None)
+
+			# ISI per cluster
+			cluster_times = spike_times_sec[labels == i] * 1000
+			if len(cluster_times) > 1:
+				cluster_isi.append(np.diff(cluster_times))
+			else:
+				cluster_isi.append(np.array([]))
+
 		return {
-			"title": f"Spike Analysis – {channel}",
-			"plots": [
-				{
-					"title": "Detected Spikes",
-					"x": result["times"],
-					"y": result["peaks"],
-					"kind": "scatter",
-				},
-				{
-					"title": "Average Spike Waveform",
-					"x": np.arange(len(mean_wf)),
-					"y": mean_wf,
-					"kind": "line",
-				},
-				{
-					"title": "ISI Histogram",
-					"x": None,
-					"y": result["isi_ms"],
-					"kind": "hist",
-				},
-			],
+			"labels": labels,
+			"features": features,
+			"cluster_means": cluster_means,
+			"cluster_isi": cluster_isi,
+			"n_clusters": n_clusters,
 		}
 class MyWaveforms:
 	def __init__(self, waveforms, recording, fs, spikes_vector_loc, num_clusters, path):
