@@ -171,7 +171,6 @@ class Recording:
 				load_from_file = False
 			else:
 				load_from_file = True
-			print("open record")
 			neural,fs, basename_without_ext, information = load_data_multich(path, start=start, dur=dur, port=port,  #intan_ch, Z_magnitude, Z_phase 
 												load_from_file=load_from_file,
 												load_multiple_files=load_multiple_files,
