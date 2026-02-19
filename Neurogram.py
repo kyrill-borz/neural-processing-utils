@@ -2200,33 +2200,74 @@ class Recording:
 
 		return references_df
 
+	def reference_chunked(
+		self,
+		signal: pl.DataFrame,
+		method: str = "Mean",
+		chunk_size: int = 200_000,
+	):
+		"""
+		Memory-safe common reference (mean or median).
+		Processes the dataframe in row chunks.
+		"""
+
+		channels = self.filter_ch
+		n_rows = signal.height
+
+		referenced_chunks = []
+
+		for start in range(0, n_rows, chunk_size):
+
+			end = min(start + chunk_size, n_rows)
+
+			# Slice chunk
+			chunk = signal.slice(start, end - start)
+
+			# Convert only channel columns to NumPy
+			chunk_np = chunk.select(channels).to_numpy()
+
+			# Compute row reference
+			if method == "Mean":
+				ref = chunk_np.mean(axis=1, keepdims=True)
+
+			elif method == "Median":
+				ref = np.median(chunk_np, axis=1, keepdims=True)
+
+			else:
+				raise ValueError("Method must be 'Mean' or 'Median'")
+
+			# Subtract reference
+			referenced_np = chunk_np - ref
+
+			# Convert back to Polars
+			referenced_chunk = pl.DataFrame(
+				referenced_np,
+				schema=channels,
+			)
+
+			referenced_chunks.append(referenced_chunk)
+
+		# Concatenate chunks
+		return pl.concat(referenced_chunks)
+
 	def apply_referencing(self, method: str):
 		"""
 		Apply referencing to self.filtered and store result in self.referenced
 		"""
 		signal = self.filtered
 
-		if method == "Median":
-			all_ch_list = self.filter_ch
-			print(all_ch_list)
-			ref = signal.select(
-				pl.concat_list(all_ch_list).list.median().alias("ref")
-			)["ref"]
-
-			self.referenced = signal.with_columns(
-				[(pl.col(col) - ref).alias(col) for col in all_ch_list]
+		if method == "Mean":
+			self.referenced = self.reference_chunked(
+				signal=signal,
+				method="Mean",  # or "Median"
 			)
+		elif method == "Median":
 
-		elif method == "Mean":
-			all_ch_list = self.filter_ch
 
-			ref = signal.select(
-				pl.concat_list(all_ch_list).list.mean().alias("ref")
-			)["ref"]
-
-			self.referenced = signal.with_columns(
-				[(pl.col(col) - ref).alias(col) for col in all_ch_list]
-			)
+			self.referenced = self.reference_chunked(
+					signal=signal,
+					method="Median",  # or "Mean"
+				)
 		elif method == "Bipolar":
 			self.referenced = self.bipolar_referencing_polars(
 				self.filtered, self.filter_ch
@@ -2239,7 +2280,8 @@ class Recording:
 			self.referenced = self.filtered
 		else:
 			raise NotImplementedError(f"Referencing method '{method}' not implemented")
-	
+
+		print("finished applying referencing: %s" %method)
 	def detect_spikes_single_channel_polars(
 		self,
 		channel: str,
@@ -2369,13 +2411,13 @@ class Recording:
 		Complete single-channel spike analysis.
 		Returns pure data only (no plotting instructions).
 		"""
-
+		print("detecting spikes")
 		result = self.detect_spikes_single_channel_polars(
 			channel=channel,
 			height_std=height_std,
 			min_distance_ms=min_distance_ms,
 		)
-
+		print("spikes detected: %d" %len(result["indices"]))
 		# Defensive: no spikes detected
 		if len(result["indices"]) == 0:
 			result.update({
