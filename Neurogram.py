@@ -30,7 +30,7 @@ from tkinter import *
 # from tkinter import simpledialog
 from sklearn import metrics
 import statistics
-import scipy.stats
+from scipy.stats import zscore
 from sklearn import preprocessing
 # Import listed colormap
 from matplotlib.colors import ListedColormap
@@ -2004,6 +2004,7 @@ class Recording:
 			result["ks_stat"] = ks_stat
 			result["ks_p"] = ks_p
 
+		print(result)
 		return result
 
 	def gif(self, dataframe, topo_plot, samples, normalize=True, path='', make_contour=False, 
@@ -2448,6 +2449,136 @@ class Recording:
 			})
 
 		return result
+
+	def multi_channel_spike_analysis_polars(
+			self,
+			channels: list[str],
+			height_std: float = 4.0,
+			min_distance_ms: float = 3.0,
+			extract_waveforms: bool = True,
+	):
+		"""
+		Detect spikes across multiple channels.
+
+		Parameters
+		----------
+		channels : list[str]
+			Channel names to analyse (must exist in self.referenced or self.filtered)
+
+		height_std : float
+			Threshold in standard deviations (z-score)
+
+		min_distance_ms : float
+			Minimum distance between spikes in milliseconds
+
+		extract_waveforms : bool
+			Whether to extract spike waveforms
+
+		Returns
+		-------
+		dict
+			{
+				channel_name : {
+					"indices": np.ndarray,
+					"times": np.ndarray,
+					"peaks": np.ndarray,
+					"waveforms": np.ndarray | None,
+					"mean_waveform": np.ndarray | None,
+					"std_waveform": np.ndarray | None,
+					"isi_ms": np.ndarray | None
+				}
+			}
+	"""
+		fs = self.fs
+		min_distance_samples = int(min_distance_ms / 1000 * fs)
+
+		# Choose referenced if available
+		if hasattr(self, "referenced") and self.referenced is not None:
+			df = self.referenced
+		else:
+			df = self.filtered
+
+		results = {}
+
+		# waveform window (±2 ms)
+		waveform_window = int(2 * fs / 1000)
+
+		for ch in channels:
+
+			series = df[ch]
+			signal = series.to_numpy()
+
+			# --- Standardize signal ---
+			z_signal = zscore(signal, nan_policy="omit")
+
+			# --- Detect peaks ---
+			peaks, properties = find_peaks(
+				z_signal,
+				height=height_std,
+				distance=min_distance_samples
+			)
+
+			if len(peaks) == 0:
+
+				results[ch] = {
+					"indices": None,
+					"times": None,
+					"peaks": None,
+					"waveforms": None,
+					"mean_waveform": None,
+					"std_waveform": None,
+					"isi_ms": None
+				}
+
+				continue
+
+			spike_times_sec = peaks / fs
+			spike_peaks = signal[peaks]
+
+			waveforms = None
+			mean_waveform = None
+			std_waveform = None
+
+			# --- Waveform extraction ---
+			if extract_waveforms:
+
+				wf_list = []
+
+				for idx in peaks:
+
+					start = max(0, idx - waveform_window)
+					end = min(len(signal), idx + waveform_window)
+
+					wf = signal[start:end]
+
+					# pad if needed
+					if len(wf) < 2 * waveform_window:
+						pad = 2 * waveform_window - len(wf)
+						wf = np.pad(wf, (0, pad))
+
+					wf_list.append(wf)
+
+				waveforms = np.array(wf_list)
+
+				mean_waveform = waveforms.mean(axis=0)
+				std_waveform = waveforms.std(axis=0)
+
+			# --- ISI calculation ---
+			spike_times_ms = spike_times_sec * 1000
+			isi = np.diff(spike_times_ms) if len(spike_times_ms) > 1 else None
+
+			results[ch] = {
+				"indices": peaks,
+				"times": spike_times_sec,
+				"peaks": spike_peaks,
+				"waveforms": waveforms,
+				"mean_waveform": mean_waveform,
+				"std_waveform": std_waveform,
+				"isi_ms": isi,
+			}
+
+		return results
+	
 	def cluster_spike_waveforms(
 		self,
 		waveforms: np.ndarray,
