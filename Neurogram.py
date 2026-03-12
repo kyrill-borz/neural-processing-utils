@@ -30,7 +30,7 @@ from tkinter import *
 # from tkinter import simpledialog
 from sklearn import metrics
 import statistics
-from scipy.stats import zscore
+
 from sklearn import preprocessing
 # Import listed colormap
 from matplotlib.colors import ListedColormap
@@ -45,9 +45,9 @@ import dask.dataframe as dd
 
 # Scipy
 from scipy import signal
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, correlate
 from scipy import ndimage
-
+from scipy.stats import zscore
 # TKinter for selecting files
 from tkinter import Tk	 # from tkinter import Tk for Python 3.x
 from tkinter.filedialog import askopenfile
@@ -2636,6 +2636,113 @@ class Recording:
 			"cluster_means": cluster_means,
 			"cluster_isi": cluster_isi,
 			"n_clusters": n_clusters,
+		}
+
+	def spatial_spike_correlation(
+    self,
+    spike_trains: dict,
+    correct_order: list[int],
+    c2c_mm: float = 4.5,
+    bin_ms: float = 1.0
+	):
+		"""
+		Compute spike-train cross correlation vs electrode distance.
+
+		Parameters
+		----------
+		spike_trains : dict
+			{channel: spike_indices}
+
+		correct_order : list[int]
+			physical electrode order
+
+		c2c_mm : float
+			contact-to-contact distance across probe
+
+		bin_ms : float
+			time bin for spike train histogram
+
+		Returns
+		-------
+		dict
+		"""
+
+		fs = self.fs
+		electrode_spacing = c2c_mm / (len(correct_order) - 1)
+
+		wrong_order = [
+				int(ch.replace("ch_", ""))
+				for ch in spike_trains.keys()
+			]
+
+		available_channels = [ch for ch in correct_order if ch in wrong_order]
+
+		channel_indices = {ch: i for i, ch in enumerate(correct_order)}
+
+		distances = []
+		correlations = []
+		color_labels = []
+		channel_pairs = []
+		print("available channels:", available_channels, "wrong order:", wrong_order, "correct order:", correct_order)
+		# convert spike indices → ms
+		spike_times_ms = {
+			ch: np.array(spike_trains["ch_" + str(ch)]) / fs * 1000
+			for ch in available_channels
+		}
+		print("spike_times:", spike_times_ms)
+		valid_max_times = [
+			times.max() for times in spike_times_ms.values() if len(times) > 0
+		]
+
+		if len(valid_max_times) == 0:
+			raise ValueError("No spikes detected in selected channels.")
+
+		max_time = max(valid_max_times)
+		bins = np.arange(0, max_time + bin_ms, bin_ms)
+
+		binned_spikes = {
+			ch: np.histogram(spike_times_ms[ch], bins=bins)[0]
+			for ch in available_channels
+		}
+
+		for i in range(len(available_channels)):
+			for j in range(i + 1, len(available_channels)):
+
+				ch1 = available_channels[i]
+				ch2 = available_channels[j]
+
+				dist = abs(channel_indices[ch1] - channel_indices[ch2]) * electrode_spacing
+
+				spike_train_1 = binned_spikes[ch1]
+				spike_train_2 = binned_spikes[ch2]
+
+				cross_corr = correlate(spike_train_1, spike_train_2, mode="full")
+
+				norm_factor = np.sqrt(
+					np.sum(spike_train_1 ** 2) * np.sum(spike_train_2 ** 2)
+				)
+
+				corr = np.max(cross_corr) / norm_factor if norm_factor > 0 else 0
+
+				distances.append(dist)
+				correlations.append(corr)
+				color_labels.append(abs(channel_indices[ch1] - channel_indices[ch2]) - 1)
+				channel_pairs.append(f"{ch1}-{ch2}")
+
+		distances = np.array(distances)
+		correlations = np.array(correlations)
+
+		slope, intercept = np.polyfit(distances, correlations, 1)
+
+		return {
+			"distances": distances,
+			"correlations": correlations,
+			"pairs": channel_pairs,
+			"colors": np.array(color_labels),
+			"slope": slope,
+			"intercept": intercept,
+			"max_corr": correlations.max(),
+			"min_corr": correlations.min()
 		}
 class MyWaveforms:
 	def __init__(self, waveforms, recording, fs, spikes_vector_loc, num_clusters, path):
