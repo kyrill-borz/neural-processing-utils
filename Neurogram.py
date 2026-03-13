@@ -2683,7 +2683,6 @@ class Recording:
 		correlations = []
 		color_labels = []
 		channel_pairs = []
-		print("available channels:", available_channels, "wrong order:", wrong_order, "correct order:", correct_order)
 		# convert spike indices → ms
 		spike_times_ms = {
 			ch: np.array(spike_trains["ch_" + str(ch)]) / fs * 1000
@@ -2743,6 +2742,253 @@ class Recording:
 			"intercept": intercept,
 			"max_corr": correlations.max(),
 			"min_corr": correlations.min()
+		}
+
+	def spike_propagation_directionality(
+		self,
+		spike_times_ms: dict,
+		correct_order: list[int],
+		c2c_mm: float = 4.5,
+		max_delay_ms: float = 7,
+	):
+		"""
+		Estimate spike propagation directionality across electrodes.
+
+		Parameters
+		----------
+		spike_times_ms : dict
+			{channel: spike_times_ms}
+
+		correct_order : list[int]
+			electrode order along probe
+
+		c2c_mm : float
+			total contact-to-contact probe length
+
+		max_delay_ms : float
+			maximum delay window for spike matching
+
+		Returns
+		-------
+		dict
+		"""
+
+		electrode_spacing = c2c_mm / (len(correct_order) - 1)
+
+		electrode_positions = {
+			ch: i * electrode_spacing
+			for i, ch in enumerate(correct_order)
+		}
+
+		wrong_order = [
+				int(ch.replace("ch_", ""))
+				for ch in spike_times_ms.keys()
+			]
+
+		available_channels = [ch for ch in correct_order if ch in wrong_order]
+
+		ordered_positions = {
+			ch: electrode_positions[ch]
+			for ch in available_channels
+		}
+
+		electrode_distances = {
+			(ch1, ch2): abs(
+				ordered_positions[ch1] - ordered_positions[ch2]
+			)
+			for ch1, ch2 in itertools.combinations(available_channels, 2)
+		}
+
+		directionality_counts = {
+			dist: {"positive": 0, "negative": 0}
+			for dist in set(electrode_distances.values())
+		}
+
+		delay_storage = {
+			pair: []
+			for pair in electrode_distances
+		}
+
+		for ch1, ch2 in electrode_distances:
+
+			spikes_ch1 = spike_times_ms.get(ch1, [])
+			spikes_ch2 = np.array(spike_times_ms.get(ch2, []))
+
+			if len(spikes_ch1) == 0 or len(spikes_ch2) == 0:
+				continue
+
+			for spike1 in spikes_ch1:
+
+				relevant = spikes_ch2[
+					(spikes_ch2 >= spike1 - max_delay_ms)
+					& (spikes_ch2 <= spike1 + max_delay_ms)
+				]
+
+				spike_diff = relevant - spike1
+
+				delay_storage[(ch1, ch2)].extend(spike_diff)
+
+				distance = electrode_distances[(ch1, ch2)]
+
+				for d in np.sign(spike_diff):
+
+					if d == 1:
+						directionality_counts[distance]["positive"] += 1
+
+					elif d == -1:
+						directionality_counts[distance]["negative"] += 1
+
+		return {
+			"directionality_counts": directionality_counts,
+			"delay_storage": delay_storage,
+			"distances": list(directionality_counts.keys()),
+		}
+	def rolling_propagation_index(
+		self,
+		spike_times_ms: dict,
+		correct_order: list[int],
+		window_length_min: float = 1,
+		step_size_min: float = 1,
+		c2c_mm: float = 4.5,
+		max_delay_ms: float = 2,
+		bin_range=(-2, 2),
+		bin_width=0.002
+	):
+		"""
+		Compute rolling propagation index (PI) for adjacent electrodes.
+
+		Parameters
+		----------
+		spike_times_ms : dict
+			{channel: spike_times_ms}
+
+		correct_order : list[int]
+			electrode order along probe
+
+		window_length_min : float
+			rolling window size
+
+		step_size_min : float
+			window step
+
+		c2c_mm : float
+			total probe length
+
+		max_delay_ms : float
+			delay window for spike matching
+
+		Returns
+		-------
+		dict
+		"""
+
+		window_length_ms = window_length_min * 60 * 1000
+		step_size_ms = step_size_min * 60 * 1000
+
+		electrode_spacing = c2c_mm / (len(correct_order) - 1)
+
+		electrode_positions = {
+			ch: i * electrode_spacing
+			for i, ch in enumerate(correct_order)
+		}
+
+		# Extract available channels
+		wrong_order = [
+			int(ch.replace("ch_", ""))
+			for ch in spike_times_ms.keys()
+		]
+
+		available_channels = [ch for ch in correct_order if ch in wrong_order]
+
+		ordered_positions = {
+			ch: electrode_positions[ch]
+			for ch in available_channels
+		}
+
+		# Adjacent pairs only
+		adjacent_pairs = list(zip(available_channels[:-1], available_channels[1:]))
+
+		# Distance lookup
+		electrode_distances = {
+			(ch1, ch2): abs(
+				ordered_positions[ch1] - ordered_positions[ch2]
+			)
+			for ch1, ch2 in adjacent_pairs
+		}
+
+		# Histogram bins
+		bins = np.arange(bin_range[0], bin_range[1] + bin_width, bin_width)
+		bin_centers = (bins[:-1] + bins[1:]) / 2
+		zero_bin_idx = np.argmin(np.abs(bin_centers))
+
+		# Determine recording range
+		all_spikes = list(itertools.chain(*spike_times_ms.values()))
+		total_start = int(min(all_spikes))
+		total_end = int(max(all_spikes))
+
+		periods_min = []
+
+		pi_storage = {
+			pair: []
+			for pair in adjacent_pairs
+		}
+
+		for start in range(total_start, total_end - window_length_ms + 1, step_size_ms):
+
+			end = start + window_length_ms
+			periods_min.append(start / 60000)
+
+			spikes_window = {
+				ch: np.array([
+					s for s in spikes if start <= s < end
+				])
+				for ch, spikes in spike_times_ms.items()
+			}
+
+			for ch1, ch2 in adjacent_pairs:
+
+				spikes1 = spikes_window.get(ch1, [])
+				spikes2 = np.array(spikes_window.get(ch2, []))
+
+				if len(spikes1) == 0 or len(spikes2) == 0:
+					pi_storage[(ch1, ch2)].append(np.nan)
+					continue
+
+				delays = []
+
+				for spike1 in spikes1:
+
+					relevant = spikes2[
+						(spikes2 >= spike1 - max_delay_ms)
+						& (spikes2 <= spike1 + max_delay_ms)
+					]
+
+					delays.extend(relevant - spike1)
+
+				if len(delays) == 0:
+					pi_storage[(ch1, ch2)].append(np.nan)
+					continue
+
+				hist, _ = np.histogram(delays, bins=bins)
+
+				max_val = np.max(hist)
+
+				val_at_zero = max(
+					hist[max(0, zero_bin_idx - 1)],
+					hist[zero_bin_idx],
+					hist[min(len(hist) - 1, zero_bin_idx + 1)]
+				)
+
+				pi = (max_val - val_at_zero) / max_val if max_val > 0 else np.nan
+
+				pi_storage[(ch1, ch2)].append(pi)
+
+		return {
+			"periods_min": periods_min,
+			"pairs": adjacent_pairs,
+			"pi_storage": pi_storage,
+			"distances": list(set(electrode_distances.values())),
+			"electrode_distances": electrode_distances
 		}
 class MyWaveforms:
 	def __init__(self, waveforms, recording, fs, spikes_vector_loc, num_clusters, path):
