@@ -2117,11 +2117,11 @@ class Recording:
 			raise ValueError("Bipolar referencing requires at least two channels")
 
 		# Generate all possible bipolar pairs (same as itertools.combinations)
-		bipolar_pairs = list(itertools.combinations(all_ch_list, 2))
+		bipolar_pairs = list(itertools.pairwise(all_ch_list))
 
 		# Build Polars expressions for each bipolar pair
 		bipolar_exprs = [
-			(pl.col(ch1) - pl.col(ch2)).alias(f"{ch1}-{ch2}")
+			(pl.col(ch1) - pl.col(ch2)).alias(f"{ch1}")
 			for ch1, ch2 in bipolar_pairs
 		]
 
@@ -2177,7 +2177,7 @@ class Recording:
 			proximal = filter_ch[i - offset]
 			distal = filter_ch[i + offset]
 
-			col_name = f"{center}_tripolar_o{offset}"
+			col_name = f"{center}"
 			label = f"2×{center} - ({proximal} + {distal})"
 
 			tripolar_exprs.append(
