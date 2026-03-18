@@ -214,6 +214,38 @@ class Recording:
 		print('Recording length: %s(samples), %s(s): ' %(length, length/fs))
 		return cls(neural, fs, length, map_array, basename_without_ext, information) #intan_ch, Z_magnitude, Z_phase)
 	
+	def export(self, folder_path):
+		os.makedirs(folder_path, exist_ok=True)
+
+		if self.recording is not None:
+			self.recording.write_parquet(
+                os.path.join(folder_path, "raw_signal.parquet")
+            )
+		if self.filtered is not None:
+			self.filtered.write_parquet(
+                os.path.join(folder_path, "filtered.parquet")
+            )
+		if self.referenced is not None:
+			self.referenced.write_parquet(
+                os.path.join(folder_path, "referenced.parquet")
+            )
+		spike_rows = []
+		# for ch, spikes in self.spike_data["spike_times"].items():
+		# 	for s in spikes:
+		# 		spike_rows.append({"channel": ch, "time": float(s)})
+		
+		# if spike_rows:
+		# 	pl.DataFrame(spike_rows).write_parquet(
+		# 		os.path.join(folder_path, "spike_times.parquet")
+        #     )
+
+		metadata = {
+            "sampling_rate": self.fs,
+            "channels": self.channels,
+        }
+		with open(os.path.join(folder_path, "metadata.json"), "w") as f:
+			json.dump(metadata, f, indent=2)
+
 	def startAnalysisGui(self, options_filter, options_detection, options_threshold):
 		# -----------------
 		# GUI for inputs
@@ -2287,6 +2319,7 @@ class Recording:
 		self,
 		channel: str,
 		height_std: float = 4.0,
+		maximum_height_std: float = 10.0,
 		min_distance_ms: float = 3.0,
 		):
 			"""
@@ -2307,7 +2340,7 @@ class Recording:
 			from scipy.signal import find_peaks
 			indices, properties = find_peaks(
 				signal,
-				height=threshold,
+				height=(threshold, maximum_height_std * signal.std()),
 				distance=min_distance_samples,
 			)
 
@@ -2405,6 +2438,7 @@ class Recording:
 		self,
 		channel: str,
 		height_std: float = 4.0,
+		maximum_height_std: float = 10.0,
 		min_distance_ms: float = 3.0,
 		extract_waveforms: bool = True,
 	):
@@ -2416,6 +2450,7 @@ class Recording:
 		result = self.detect_spikes_single_channel_polars(
 			channel=channel,
 			height_std=height_std,
+			maximum_height_std=maximum_height_std,
 			min_distance_ms=min_distance_ms,
 		)
 		print("spikes detected: %d" %len(result["indices"]))
