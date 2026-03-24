@@ -67,6 +67,7 @@ sys.path.append("../")
 # Own libraries
 from utils.load_data import load_setup, load_matfiles, load_data_multich, load_bsamples,load_data_dask, load_bsamples_start_end
 from utils import *
+from utils.utils import _json_safe
 # from visualization.graphics.plots import *
 # from processing.filter import FIR_smooth
 # from visualization.SC_topo import *
@@ -240,11 +241,78 @@ class Recording:
         #     )
 
 		metadata = {
-            "sampling_rate": self.fs,
-            "channels": self.channels,
-        }
+			"fs": self.fs,
+			"length": self.length,
+			"map_array": self.map_array,
+			"filename": self.filename,
+			"information": [],
+
+			"channels": self.channels,
+			"filter_ch": self.filter_ch,
+			"threshold": self.threshold,
+		}
+		safe_metadata = _json_safe(metadata)
 		with open(os.path.join(folder_path, "metadata.json"), "w") as f:
-			json.dump(metadata, f, indent=2)
+			json.dump(safe_metadata, f, indent=2)
+
+	@classmethod
+	def load_from_folder(cls, folder_path):
+
+		# --- Load metadata ---
+		with open(os.path.join(folder_path, "metadata.json"), "r") as f:
+			metadata = json.load(f)
+
+		# --- Load main recording (REQUIRED) ---
+		recording_path = os.path.join(folder_path, "raw_signal.parquet")
+
+		if not os.path.exists(recording_path):
+			raise ValueError("Missing raw_signal.parquet (required)")
+
+		neural = pl.read_parquet(recording_path)
+
+		# --- Construct object properly ---
+		obj = cls(
+			neural=neural,
+			fs=metadata["fs"],
+			length=metadata["length"],
+			map_array=metadata["map_array"],
+			filename=metadata["filename"],
+			information=metadata["information"]
+		)
+
+		# --- Optional signals ---
+		def load_optional(name):
+			path = os.path.join(folder_path, name)
+			return pl.read_parquet(path) if os.path.exists(path) else None
+
+		obj.filtered = load_optional("filtered.parquet")
+		obj.referenced = load_optional("referenced.parquet")
+
+		# --- Spike data ---
+		spike_path = os.path.join(folder_path, "spike_times.parquet")
+
+		if os.path.exists(spike_path):
+
+			df = pl.read_parquet(spike_path)
+
+			spike_dict = {}
+
+			for ch in df["channel"].unique():
+				spike_dict[ch] = df.filter(
+					pl.col("channel") == ch
+				)["time"].to_numpy()
+
+			obj.spike_data = {"spike_times": spike_dict}
+
+		else:
+			obj.spike_data = {"spike_times": {}}
+
+		# --- Restore other attributes (important) ---
+		obj.channels = metadata.get("channels", [])
+		obj.filter_ch = metadata.get("filter_ch", [])
+		obj.threshold = metadata.get("threshold", [])
+
+		return obj
 
 	def startAnalysisGui(self, options_filter, options_detection, options_threshold):
 		# -----------------
