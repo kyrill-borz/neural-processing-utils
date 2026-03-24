@@ -1983,3 +1983,23 @@ if __name__ == '__main__':
  # --------Feature extraction-------- Wilson
 
       
+def _json_safe(obj):
+    """
+    Convert objects into JSON-serializable formats.
+    """
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+
+    return obj
