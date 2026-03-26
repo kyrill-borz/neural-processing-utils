@@ -154,7 +154,6 @@ class Recording:
 		intan_ch:   [list of ints] Available channels from amplifier data in rhs file. Outdated, now contained in 'information['intan_ch']'
 
 		"""
-
 		map_array = {}
 		# Load dataframes
 		if pig:
@@ -2557,6 +2556,7 @@ class Recording:
 			self,
 			channels: list[str],
 			height_std: float = 4.0,
+			maximum_height_std: float = 10.0,
 			min_distance_ms: float = 3.0,
 			extract_waveforms: bool = True,
 	):
@@ -2617,7 +2617,7 @@ class Recording:
 			# --- Detect peaks ---
 			peaks, properties = find_peaks(
 				z_signal,
-				height=height_std,
+				height=(height_std, maximum_height_std),
 				distance=min_distance_samples
 			)
 
@@ -2984,7 +2984,7 @@ class Recording:
 		-------
 		dict
 		"""
-
+		print("Computing rolling propagation index with window length %d min and step size %d min" %(window_length_min, step_size_min))
 		window_length_ms = window_length_min * 60 * 1000
 		step_size_ms = step_size_min * 60 * 1000
 
@@ -3010,7 +3010,7 @@ class Recording:
 
 		# Adjacent pairs only
 		adjacent_pairs = list(zip(available_channels[:-1], available_channels[1:]))
-
+		print("Adjacent pairs:", adjacent_pairs)
 		# Distance lookup
 		electrode_distances = {
 			(ch1, ch2): abs(
@@ -3023,7 +3023,6 @@ class Recording:
 		bins = np.arange(bin_range[0], bin_range[1] + bin_width, bin_width)
 		bin_centers = (bins[:-1] + bins[1:]) / 2
 		zero_bin_idx = np.argmin(np.abs(bin_centers))
-
 		# Determine recording range
 		all_spikes = list(itertools.chain(*spike_times_ms.values()))
 		total_start = int(min(all_spikes))
@@ -3035,9 +3034,8 @@ class Recording:
 			pair: []
 			for pair in adjacent_pairs
 		}
-
-		for start in range(total_start, total_end - window_length_ms + 1, step_size_ms):
-
+		for start in range(0, total_end - window_length_ms + 1, step_size_ms):
+			
 			end = start + window_length_ms
 			periods_min.append(start / 60000)
 
@@ -3047,13 +3045,15 @@ class Recording:
 				])
 				for ch, spikes in spike_times_ms.items()
 			}
-
+			print("spikes_window:", spikes_window)
 			for ch1, ch2 in adjacent_pairs:
 
-				spikes1 = spikes_window.get(ch1, [])
-				spikes2 = np.array(spikes_window.get(ch2, []))
-
+				spikes1 = spikes_window.get("ch_" + str(ch1), [])
+				spikes2 = np.array(spikes_window.get("ch_" + str(ch2), []))
+				print("spikes1, spikes2:", spikes1, spikes2)
+				print("spikes in window - %s: %s, %s: %s" %(ch1, spikes1, ch2, spikes2))
 				if len(spikes1) == 0 or len(spikes2) == 0:
+					print("No spikes in one of the channels for this window, skipping pair %s-%s" %(ch1, ch2))
 					pi_storage[(ch1, ch2)].append(np.nan)
 					continue
 
@@ -3067,8 +3067,9 @@ class Recording:
 					]
 
 					delays.extend(relevant - spike1)
-
+				print(f"Pair {ch1}-{ch2}, delays: {delays}")
 				if len(delays) == 0:
+					print("No valid delays found for this pair, appending NaN")
 					pi_storage[(ch1, ch2)].append(np.nan)
 					continue
 
@@ -3085,7 +3086,8 @@ class Recording:
 				pi = (max_val - val_at_zero) / max_val if max_val > 0 else np.nan
 
 				pi_storage[(ch1, ch2)].append(pi)
-
+				print(f"Window {start}-{end} ms, pair {ch1}-{ch2}, PI: {pi:.3f}")
+		print("PI_storage:", pi_storage)
 		return {
 			"periods_min": periods_min,
 			"pairs": adjacent_pairs,
