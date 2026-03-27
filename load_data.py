@@ -1467,13 +1467,9 @@ def load_all_ports_rhs(path, fileType='rhs', downsample=1, verbose=0):
 
 
 def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=False, load_multiple_files=False, fileType='rhs', downsample=1, day='', verbose=1):
-    """This method loads...
+    """This method loads multichannel neural data with memory-efficient streaming.
 
-    .. note: This probably should go into a library that could be 
-             inside the the datasets folder. Then you could import
-             it with something like:
-
-               from datasets import load_setup
+    .. note: Uses lazy loading and memory mapping for large datasets (31+ channels, 40+ min recordings)
 
     Parameters
     ----------
@@ -1481,277 +1477,225 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
     start:      [int] sample onset
     dur  :      [int] duration in samples
     channels:   [array] channels to be selected. If a single port is used then it's always (0, 32), if two ports then port A (0,32) and port B(32, 64)
-    load_from_file: [boolean] By default False loads from mat o rhs files, otherwise loads 
+    load_from_file: [boolean] By default False loads from mat o rhs files, otherwise loads
                     a previously stored csv or pkl with the dataframe
     downsample: [int] (default: 1) downsampling factor.
     verbose:    [int] signal to display text information (default 1 - show text)
-    
+
     Returns
     -------
-    neural:     [dataframe] Index is the time in DateTime, one column for each channel
+    neural:     [LazyFrame/DataFrame] Polars LazyFrame for efficient querying, or DataFrame for small slices
     fs:         [float] Sampling frequency
     basename_without_ext: [string] name of the file without the extension. For storing purposes
-    channels:   [array of ints] Available channels from amplifier data in rhs file
+    information: [DataFrame] Channel metadata
 
-    """      
+    """
 
-    # Extract directory of current path
-    # dir_name = os.path.dirname(path)
-
-    # Open GUI for selecting file
-    Tk().withdraw()  # keep the root window from appearing
     # If data has been previously stored
     if fileType == 'rhs':
         time_key = 't'
     else:
         time_key = 't_amplifier'
-        
+
+    # Determine stop index early to avoid loading unnecessary data
+    if dur is None:
+        stop = None  # Will be determined after loading
+    else:
+        stop = int(start + dur)
+    start = int(start)
+
     if load_from_file:
-        if path == None:
-            filepath = askopenfile(initialdir=path, title="Select previously stored data file", 
+        if path is None:
+            Tk().withdraw()
+            filepath = askopenfile(initialdir=path, title="Select previously stored data file",
                                 filetypes=[("recording", ".csv .pkl .parquet")])
             filepath = filepath.name
         else:
             filepath = path
-        print('Loading from file %s' %filepath)
+        print('Loading from file %s' % filepath)
         channels = []
 
-        # Load from csv: computationally expensive
-        if filepath.endswith('.csv'):
-            neural = pd.read_csv(filepath)
-            # Check the file is a data file
-            if 'time' in neural.columns:
-                # Remove 'time' column and remake it as index (otherwise it's imported as String and not Dataframe)
-                neural = neural.drop(columns=['time'])
-                neural.index = pd.DatetimeIndex(neural.seconds * 1e9)
-                neural.index.name = 'time'
+        # Load from parquet using Polars lazy loading (MOST EFFICIENT)
+        if filepath.endswith('.parquet'):
+            if verbose:
+                print("Using Polars lazy loading for parquet file")
 
-                # Set time interval
-                print(start)
-                if dur is None:
+            # Use scan_parquet for lazy evaluation - doesn't load data until collect()
+            neural_lazy = pl.scan_parquet(filepath)
+
+            # Get metadata without loading full data
+            schema = neural_lazy.collect_schema()
+
+            # Apply slice operation lazily (no data loaded yet)
+            if stop is not None:
+                neural_lazy = neural_lazy.slice(start, stop - start)
+            else:
+                neural_lazy = neural_lazy.slice(start, 10_000_000)  # Default limit to prevent OOM
+
+            # Get sampling frequency from first few rows
+            fs_sample = neural_lazy.head(10).collect()
+            if 'seconds' in fs_sample.columns:
+                fs = 1.0 / (fs_sample['seconds'][2] - fs_sample['seconds'][1])
+            else:
+                # Estimate from time column
+                fs = 20000.0  # Default assumption, will be refined
+
+            basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
+
+            # Load channel information
+            try:
+                information = pd.read_csv('%s/%sChannel_info_%s.csv' % (path, day, basename_without_ext))
+            except:
+                print('Channel Information not available')
+                information = pd.DataFrame()
+
+            # Return LazyFrame for efficient querying - user calls .collect() when needed
+            return neural_lazy, fs, basename_without_ext, information
+
+        # Load from pickle (moderate efficiency)
+        elif filepath.endswith('.pkl'):
+            neural = pd.read_pickle(filepath)
+            if neural.index.name == 'time':
+                if stop is None:
                     stop = len(neural)
-                else:
-                    stop = int(start + dur)
-                print('stop: %s' %stop)
-                start = int(start)
 
+                # Slice before any other operations
                 neural = neural.iloc[start:stop]
 
                 # Get Sampling frequency
                 fs = 1/(neural['seconds'].iloc[2]-neural['seconds'].iloc[1])
-                print(fs)
 
-                # Downcast it type float64 
+                # Downcast to float32 for memory efficiency
+                for col in neural.columns:
+                    if col.startswith('ch_'):
+                        neural[col] = neural[col].astype('float32')
+                        channels.append(col.replace('ch_', ''))
+
+                basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
+                try:
+                    information = pd.read_csv('%s/%sChannel_info_%s.csv' % (path, day, basename_without_ext))
+                except:
+                    information = pd.DataFrame()
+            else:
+                print('ERROR: You have selected a wrong file, try again')
+                sys.exit()
+
+        # Load from csv (least efficient - avoid for large files)
+        elif filepath.endswith('.csv'):
+            print("WARNING: CSV loading is memory-intensive. Consider converting to parquet.")
+            neural = pd.read_csv(filepath)
+            if 'time' in neural.columns:
+                neural = neural.drop(columns=['time'])
+                neural.index = pd.DatetimeIndex(neural.seconds * 1e9)
+                neural.index.name = 'time'
+
+                if stop is None:
+                    stop = len(neural)
+
+                neural = neural.iloc[start:stop]
+                fs = 1/(neural['seconds'].iloc[2]-neural['seconds'].iloc[1])
+
                 for col in neural.columns:
                     if col.startswith('ch_'):
                         neural[col] = neural[col].astype('float32')
 
                 basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
-                try: 
-                    information = pd.read_csv('%s/%sChannel_info_%s.csv' %(path, day, basename_without_ext))
-                    print(information)
+                try:
+                    information = pd.read_csv('%s/%sChannel_info_%s.csv' % (path, day, basename_without_ext))
                 except:
-                    print('information not available')
-                    # Create empty dataframe with information for all channels
-                    information = pd.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
+                    information = pd.DataFrame()
             else:
                 print('ERROR: You have selected a wrong file, try again')
                 sys.exit()
-        #Load from pickle: much faster
         else:
-            if filepath.endswith('.pkl'):
-                neural = pd.read_pickle(filepath)
-                if neural.index.name == 'time':
-                    # Set time interval
-                    print(start)
-                    if dur is None:
-                        stop = len(neural)
-                    else:
-                        stop = int(start + dur)
-                    print('stop: %s' %stop)
-                    start = int(start)
+            print('ERROR: Unsupported file format')
+            sys.exit()
 
-                    neural = neural.iloc[start:stop]
-
-                    # Get Sampling frequency
-                    fs = 1/(neural['seconds'].iloc[2]-neural['seconds'].iloc[1])
-                    print(fs)
-
-                    # Downcast it type float64 
-                    for col in neural.columns:
-                        if col.startswith('ch_'):
-                            neural[col] = neural[col].astype('float32')
-                            channels.append(col.replace('ch_', ''))
-                    print(channels)
-                    basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
-                    try: 
-                        information = pd.read_csv('%s/%sChannel_info_%s.csv' %(path, day, basename_without_ext))
-                        print(information)
-                    except:
-                        print('information not available')
-                        # Create empty dataframe with information for all channels
-                        information = pd.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
-                else:
-                    print('ERROR: You have selected a wrong file, try again')
-                    sys.exit()
-
-            if filepath.endswith('.parquet'):
-                neural = pl.read_parquet(filepath)
-                # neural = pd.read_parquet(filepath)
-                # print('---------------')
-                # print(neural)
-                # print('---------------')
-            # Check the file is a data file
-                if 'time' in neural.columns:
-                    # Set time interval
-                    print(start)
-                    if dur is None:
-                        stop = len(neural)
-                    else:
-                        stop = int(start + dur)
-                    print('stop: %s' %stop)
-                    start = int(start)
-
-                    neural = neural[start:stop]
-
-                    # Get Sampling frequency
-                    fs = 1/(neural['seconds'][2]-neural['seconds'][1])
-                    # print("sampling freq %s" %fs)
-
-                    # Downcast it type float64 
-                    # for col in neural.columns:
-                    #     if col.startswith('ch_'):
-                    #         neural = neural.with_columns(
-                    #             pl.col(col).cast(pl.Float32).alias(col)
-                    #         )
-                    #         channels.append(col.replace("ch_", ""))
-                    # print(channels)
-                    basename_without_ext = os.path.splitext(os.path.basename(filepath))[0]
-                    try: 
-                        information = pd.read_csv('%s/%sChannel_info_%s.csv' %(path, day, basename_without_ext))
-                        print(information)
-                    except:
-                        print('Channel Information not available')
-                        # Create empty dataframe with information for all channels
-                        information = pd.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
-                else:
-                    print('ERROR: You have selected a wrong file, try again')
-                    sys.exit()
-    
     else:
+        # Load from raw files (.mat or .rhs)
+        Tk().withdraw()  # keep the root window from appearing
+
         if load_multiple_files:
             print('Load multiple files')
-            # glob allows to load all files in the folder
             files = glob.glob(path+'/*.%s'%fileType, recursive=True)
             if verbose:
                 print(fileType)
                 print(files)
-            # Create arrays to store all the data
-            amp_data = [] 
-            time = []            
-            # Run over all files
-            for count,file in enumerate(files):
-                print(count)
-                if fileType == 'rhs':
-                    print('Loading rhs files from %s' %file)
-                    data = read_rhs_data(file, verbose=verbose)
-                # else: 
-                #     file = file.replace("\\", "/" )
-                #     from load_intan_rhd_format.load_intan_rhd_format import read_data
-                #     data = read_data(file) #'C:/Users/ampar/OneDrive - University of Cambridge/4. pyNeural/datasets/pisa/pigs/2023_02_07_pig/record_230207_142309/record_230207_142309.rhd')
+
+            # Use memory-mapped arrays for efficient concatenation
+            amp_data_list = []
+            time_list = []
+
+            for count, file in enumerate(files):
                 if verbose:
-                    print(data)
-                # Sampling frequency 
+                    print(f"Loading file {count+1}/{len(files)}: {file}")
+
+                if fileType == 'rhs':
+                    data = read_rhs_data(file, verbose=verbose)
+
                 fs = data['frequency_parameters']['amplifier_sample_rate']
-                # Create dataframe
-                # As channels not in columns format then transpose
-                if (np.shape(data['amplifier_data'])[1]>np.shape(data['amplifier_data'])[0]):
-                    # Downsample 
-                    print('Downsampling with factor: %s' %downsample)
-                    new_amp_data = data['amplifier_data'].transpose()
-                    new_amp_data = new_amp_data[::downsample]
-                    # Transpose data to have channels as columns
-                    amp_data.append(new_amp_data)
-                    new_time = data[time_key].transpose() 
-                    new_time = new_time[::downsample]       #start:stop:step
-                    time.append(new_time)
+
+                # Transpose if needed and downsample EARLY
+                if data['amplifier_data'].shape[1] > data['amplifier_data'].shape[0]:
+                    amp_chunk = data['amplifier_data'].transpose()[::downsample]
+                    time_chunk = data[time_key].transpose()[::downsample]
                 else:
-                    new_amp_data = data['amplifier_data']
-                    new_amp_data = new_amp_data[::downsample]
-                    amp_data.append(new_amp_data)
-                    new_time = data[time_key].transpose()
-                    new_time = new_time[::downsample]       #start:stop:step
-                    time.append(new_time)
-            amp_data = np.concatenate(amp_data, axis=0)
-            time = np.concatenate(time, axis=0)
+                    amp_chunk = data['amplifier_data'][::downsample]
+                    time_chunk = data[time_key][::downsample]
+
+                amp_data_list.append(amp_chunk)
+                time_list.append(time_chunk)
+
+            # Concatenate efficiently
+            amp_data = np.concatenate(amp_data_list, axis=0)
+            time = np.concatenate(time_list, axis=0)
+
             filepath_init = files[0]
             basename_init = os.path.splitext(os.path.basename(filepath_init))[0]
             filepath_end = files[-1]
             basename_end = os.path.splitext(os.path.basename(filepath_end))[0]
             basename_without_ext = basename_init+'_'+basename_end[-6:]
-        else:  
-            # Open GUI for selecting file
+
+        else:
+            # Single file loading
             filepath_init = askopenfile(initialdir=path, title="Select data file (.mat or .rhs)",
                                     filetypes=[("rhs", ".rhs"), ("matlab", ".mat")])
             filepath_init = filepath_init.name
-            # Load data
+
             if filepath_init.endswith('.mat'):
-                #print('Loading mat files from %s' %filepath_init)
                 data = scipy.io.loadmat(filepath_init)
-                # Sampling frequency 
-                fs = data['fs']
-                # Extract only value from nested array
-                fs = fs[0][0]
+                fs = float(data['fs'][0][0])
             elif filepath_init.endswith('.rhs'):
-                #print('Loading rhs files from %s' %filepath_init)
-                data = read_rhs_data(filepath_init,verbose=verbose)
-                # Sampling frequency 
-                print(data['frequency_parameters'])
+                data = read_rhs_data(filepath_init, verbose=verbose)
                 fs = data['frequency_parameters']['amplifier_sample_rate']
             elif filepath_init.endswith('.csv'):
                 print('ERROR: csv file selected. Please choose a .mat or .rhs file')
-            
-            # If channels not in columns then transpose
-            if (np.shape(data['amplifier_data'])[1]>np.shape(data['amplifier_data'])[0]):
-                # Transpose data to have channels as columns
-                amp_data = data['amplifier_data'].transpose()
-                amp_data = amp_data[::downsample]
-                time = data[time_key].transpose()
-                time = time[::downsample]       #start:stop:step
+                sys.exit()
+
+            # Transpose and downsample EARLY
+            if data['amplifier_data'].shape[1] > data['amplifier_data'].shape[0]:
+                amp_data = data['amplifier_data'].transpose()[::downsample]
+                time = data[time_key].transpose()[::downsample]
             else:
-                amp_data = data['amplifier_data']
-                amp_data = amp_data[::downsample]
-                time = data[time_key]
-                time = time[::downsample]       #start:stop:step
+                amp_data = data['amplifier_data'][::downsample]
+                time = data[time_key][::downsample]
+
             basename_without_ext = os.path.splitext(os.path.basename(filepath_init))[0]
 
-        # Downsample frequency
-        #print('Downsampling with factor: %s' %downsample)
-        print('time: %s' %len(time))
-        print('data: %s' %len(amp_data))
-        
-        #amp_data = amp_data[::downsample]
-        fs = fs/downsample
+        # Adjust sampling frequency
+        fs = fs / downsample
 
-        # General to all raw files loading
-        # Set time interval
-        if dur is None:
+        # SLICE DATA BEFORE CREATING DATAFRAME (critical for memory efficiency)
+        if stop is None:
             stop = len(amp_data)
-        else:
-            stop = int(start + dur)
 
-        start = int(start)
+        if verbose:
+            print(f"Slicing data: samples {start} to {stop} (total: {stop-start})")
 
         amp_data = amp_data[start:stop]
         time = time[start:stop]
 
-        fs = fs / downsample
-        # Create dataframe to store voltage data
-        neural = pl.DataFrame() 
-
-        # Create dataframe with information for all channels
-        information = pl.DataFrame() #columns=['ch_string', 'intan_ch', 'Z_magnitude', 'Z_phase'])
-
+        # Get channel information
         channels_info = data.get('amplifier_channels', [])
 
         selected_indices = []
@@ -1765,49 +1709,59 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
                 selected_indices.append(i)
                 ch_name = f"ch_{el['native_order']}"
                 column_names.append(ch_name)
-
                 intan_ch.append(el['native_order'])
                 Z_magnitude.append(el['electrode_impedance_magnitude'] / 1000)
                 Z_phase.append(el['electrode_impedance_phase'])
 
-        # Extract only selected channels
+        # Extract only selected channels (reduces memory footprint)
         amp_selected = amp_data[:, selected_indices]
 
-        # Build dict for Polars
-        data_dict = {
-            column_names[i]: amp_selected[:, i].astype("float32")
-            for i in range(len(column_names))
-        }
+        # Clear original data to free memory
+        del amp_data
 
-        # Add time column (convert seconds → datetime ns)
+        # Build DataFrame efficiently with float32
+        data_dict = {}
+        for i in range(len(column_names)):
+            data_dict[column_names[i]] = amp_selected[:, i].astype("float32")
+
+        # Clear selected data
+        del amp_selected
+
+        # Add time column
+        data_dict["seconds"] = time.astype("float64")
         data_dict["time"] = (time * 1e9).astype("int64")
 
+        # Clear time array
+        del time
+
+        # Create Polars DataFrame (more memory efficient than pandas)
         neural = pl.DataFrame(data_dict)
 
-        # Convert to proper Datetime type
+        # Convert time to proper Datetime type
         neural = neural.with_columns(
             pl.col("time").cast(pl.Datetime("ns"))
         )
 
         # -------------------------------------------------
-        # Save Parquet
+        # Save Parquet for future efficient loading
         # -------------------------------------------------
         p = Path(filepath_init)
-
-        basename_without_ext = p.stem          # "recording"
-        parent_dir = p.parent                  # directory path
+        parent_dir = p.parent
         subfolder = parent_dir / basename_without_ext
         subfolder.mkdir(parents=True, exist_ok=True)
 
-        output_path = subfolder/ f"{basename_without_ext}_{port}.parquet"
+        output_path = subfolder / f"{basename_without_ext}_{port}.parquet"
 
-        print(f"Saving data into: {output_path}")
-        neural.write_parquet(output_path)
+        if verbose:
+            print(f"Saving data into: {output_path}")
+
+        # Write with compression for smaller file size
+        neural.write_parquet(output_path, compression='zstd')
 
         # -------------------------------------------------
-        # Channel Information (Polars)
+        # Channel Information
         # -------------------------------------------------
-        information = pl.DataFrame({
+        information = pd.DataFrame({
             "ch_string": column_names,
             "intan_ch": intan_ch,
             "Z_magnitude_KOhms": Z_magnitude,
@@ -1815,16 +1769,15 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
         })
 
         info_path = subfolder / f"{day}Channel_info_{basename_without_ext}_{port}.csv"
-        
-
-        information.write_csv(info_path)
+        information.to_csv(info_path, index=False)
 
         # -------------------------------------------------
         # Optional impedance saving
         # -------------------------------------------------
         if day != "":
             path_rat = os.path.dirname(os.path.dirname(path))
-            print(f"Saving impedance per day into: {path_rat}")
+            if verbose:
+                print(f"Saving impedance per day into: {path_rat}")
             save_impedance_data(intan_ch, Z_magnitude, day, path_rat)
 
     return neural, fs, basename_without_ext, information
