@@ -171,7 +171,7 @@ class Recording:
 				load_from_file = False
 			else:
 				load_from_file = True
-			neural,fs, basename_without_ext, information = load_data_multich(path, start=start, dur=dur, port=port,  #intan_ch, Z_magnitude, Z_phase 
+			neural_lazy,fs, basename_without_ext, information = load_data_multich(path, start=start, dur=dur, port=port,  #intan_ch, Z_magnitude, Z_phase 
 												load_from_file=load_from_file,
 												load_multiple_files=load_multiple_files,
 												fileType=fileType, 
@@ -185,6 +185,7 @@ class Recording:
 											downsample=downsample,
 											verbose=verbose)
 		'''
+		neural = neural_lazy.collect()
 		print(neural)
 		length = len(neural)
 		print(length)
