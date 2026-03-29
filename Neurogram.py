@@ -2389,77 +2389,100 @@ class Recording:
 		height_std: float = 4.0,
 		maximum_height_std: float = 10.0,
 		min_distance_ms: float = 3.0,
-		):
-			"""
-			Detect spikes on a single channel using threshold + distance.
-			Returns indices, times (s), and peak amplitudes.
-			"""
+		use_referenced: bool = True, # Add this flag
+	):
+		"""
+		Detect spikes on a single channel.
+		FIX: Ensure we detect on the same signal we intend to extract from.
+		"""
+		fs = self.fs
+		
+		# CRITICAL FIX: Select the source signal explicitly
+		print("using referenced:", use_referenced and self.referenced is not None)
+		df_source = self.referenced if (use_referenced and self.referenced is not None) else self.filtered
+		
+		# Convert to numpy once for scipy
+		signal = df_source.select(channel).to_numpy().ravel()
 
-			fs = self.fs
-			signal = self.filtered[channel].to_numpy()
+		# Threshold
+		sigma = signal.std()
+		threshold = height_std * sigma
+		max_threshold = maximum_height_std * sigma
 
-			# Threshold
-			threshold = height_std * signal.std()
+		# Minimum distance in samples
+		min_distance_samples = int(min_distance_ms / 1000 * fs)
 
-			# Minimum distance in samples
-			min_distance_samples = int(min_distance_ms / 1000 * fs)
+		# Detect peaks
+		from scipy.signal import find_peaks
+		indices, properties = find_peaks(
+			signal,
+			height=(threshold, max_threshold),
+			prominence=0.01*sigma,
+			distance=min_distance_samples,
+		)
 
-			# Detect peaks
-			from scipy.signal import find_peaks
-			indices, properties = find_peaks(
-				signal,
-				height=(threshold, maximum_height_std * signal.std()),
-				distance=min_distance_samples,
-			)
+		indices = pl.Series("indices", indices, dtype=pl.Int64)
+		times = indices.cast(pl.Float64) / fs
+		peaks = pl.Series("peaks", signal[indices.to_numpy()])
 
-			indices = pl.Series("indices", indices, dtype=pl.Int64)
-
-			# Spike times (seconds)
-			times = indices.cast(pl.Float64) / fs
-
-			# Spike peak amplitudes
-			peaks = pl.Series("peaks", signal[indices.to_numpy()])
-
-			return {
-				"indices": indices,
-				"times": times,
-				"peaks": peaks,
-				"threshold": threshold,
-			}
+		return {
+			"indices": indices,
+			"times": times,
+			"peaks": peaks,
+			"threshold": threshold,
+		}
 	
 	def extract_spike_waveforms_polars(
-        self,
-        channel: str,
-        spike_indices: np.ndarray,
-        window_ms: float = 2.0,
-        use_referenced: bool = True,
-		) -> np.ndarray:
+		self,
+		channel: str,
+		spike_indices: np.ndarray,
+		window_ms: float = 2.0,
+		use_referenced: bool = True,
+	) -> np.ndarray:
 		"""
-			Extract spike waveforms using Polars-backed signal.
+		Extract spike waveforms.
+		FIX: Explicitly match the source signal used in detection.
 		"""
+		# Ensure consistency: if detection used referenced, extraction must too
+		df_source = self.referenced if (use_referenced and self.referenced is not None) else self.filtered
+		
+		# Optimization: Select column once
+		signal = df_source.select(channel).to_numpy().ravel()
 
-		df = self.referenced if use_referenced and self.referenced is not None else self.filtered
-
-		signal = df.select(channel).to_numpy().ravel()
-
-		window = int(window_ms / 1000 * self.fs)
+		half_window = int(window_ms / 2 / 1000 * self.fs)
+		total_window = 2 * half_window
 		waveforms = []
 
-		for idx in spike_indices:
-			start = max(0, idx - window)
-			end = min(len(signal), idx + window)
+		# Pre-allocate for speed if many spikes
+		n_spikes = len(spike_indices)
+		waveforms = np.zeros((n_spikes, total_window), dtype=signal.dtype)
 
-			wf = signal[start:end]
+		for i, idx in enumerate(spike_indices):
+			start = idx - half_window
+			end = idx + half_window
+			
+			# Handle boundaries
+			if start < 0:
+				pad_left = -start
+				start = 0
+			else:
+				pad_left = 0
+				
+			if end > len(signal):
+				pad_right = end - len(signal)
+				end = len(signal)
+			else:
+				pad_right = 0
+				
+			wf_segment = signal[start:end]
+			
+			# Pad if necessary
+			if pad_left > 0 or pad_right > 0:
+				wf_segment = np.pad(wf_segment, (pad_left, pad_right), mode='constant', constant_values=0)
+				
+			waveforms[i] = wf_segment
+		return waveforms
 
-			if len(wf) < 2 * window:
-				pad_left = window - (idx - start)
-				pad_right = window - (end - idx)
-				wf = np.pad(wf, (pad_left, pad_right))
-
-			waveforms.append(wf)
-
-		return np.asarray(waveforms)
-	
 	def compute_average_waveform_polars(self, waveforms: np.ndarray):
 		"""
 		Compute mean and std waveform.
@@ -2468,7 +2491,7 @@ class Recording:
 		wf_df = pl.DataFrame(waveforms)
 		mean_wf = wf_df.mean().to_numpy().ravel()
 		std_wf = wf_df.std().to_numpy().ravel()
-
+		print(len(mean_wf), len(std_wf))
 		return mean_wf, std_wf
 	
 	def compute_spike_durations(
@@ -2509,39 +2532,42 @@ class Recording:
 		maximum_height_std: float = 10.0,
 		min_distance_ms: float = 3.0,
 		extract_waveforms: bool = True,
+		use_referenced: bool = True, # Pass this through
 	):
 		"""
-		Complete single-channel spike analysis.
-		Returns pure data only (no plotting instructions).
+		Complete analysis with consistent signal sourcing.
 		"""
 		print("detecting spikes")
+		
+		# PASS THE FLAG: Detect on the same signal we will extract from
 		result = self.detect_spikes_single_channel_polars(
 			channel=channel,
 			height_std=height_std,
 			maximum_height_std=maximum_height_std,
 			min_distance_ms=min_distance_ms,
+			use_referenced=use_referenced
 		)
-		print("spikes detected: %d" %len(result["indices"]))
-		# Defensive: no spikes detected
+		
+		print("spikes detected: %d" % len(result["indices"]))
+		
 		if len(result["indices"]) == 0:
 			result.update({
-				"waveforms": None,
-				"mean_waveform": None,
-				"std_waveform": None,
-				"durations_samples": None,
-				"isi_ms": None,
+				"waveforms": None, "mean_waveform": None, "std_waveform": None,
+				"durations_samples": None, "isi_ms": None,
 			})
 			return result
 
 		if extract_waveforms:
+			# PASS THE FLAG: Extract from the same signal
 			waveforms = self.extract_spike_waveforms_polars(
 				channel=channel,
-				spike_indices=result["indices"],
+				spike_indices=result["indices"].to_numpy(), # Ensure numpy array
+				use_referenced=use_referenced
 			)
 
 			mean_wf, std_wf = self.compute_average_waveform_polars(waveforms)
 			durations = self.compute_spike_durations(waveforms)
-			isi = self.compute_isi_polars(result["times"])
+			isi = self.compute_isi_polars(result["times"].to_numpy())
 
 			result.update({
 				"waveforms": waveforms,
@@ -2616,9 +2642,13 @@ class Recording:
 			z_signal = zscore(signal, nan_policy="omit")
 
 			# --- Detect peaks ---
+			sigma = signal.std()
+			threshold = height_std * sigma
+			max_threshold = maximum_height_std * sigma
 			peaks, properties = find_peaks(
 				z_signal,
-				height=(height_std, maximum_height_std),
+				height=(threshold, max_threshold),
+				prominence=0.0001*sigma,
 				distance=min_distance_samples
 			)
 
@@ -3011,7 +3041,6 @@ class Recording:
 
 		# Adjacent pairs only
 		adjacent_pairs = list(zip(available_channels[:-1], available_channels[1:]))
-		print("Adjacent pairs:", adjacent_pairs)
 		# Distance lookup
 		electrode_distances = {
 			(ch1, ch2): abs(
@@ -3046,7 +3075,7 @@ class Recording:
 				])
 				for ch, spikes in spike_times_ms.items()
 			}
-			print("spikes_window:", spikes_window)
+
 			for ch1, ch2 in adjacent_pairs:
 
 				spikes1 = spikes_window.get("ch_" + str(ch1), [])
@@ -3068,7 +3097,6 @@ class Recording:
 					]
 
 					delays.extend(relevant - spike1)
-				print(f"Pair {ch1}-{ch2}, delays: {delays}")
 				if len(delays) == 0:
 					print("No valid delays found for this pair, appending NaN")
 					pi_storage[(ch1, ch2)].append(np.nan)
@@ -3087,7 +3115,6 @@ class Recording:
 				pi = (max_val - val_at_zero) / max_val if max_val > 0 else np.nan
 
 				pi_storage[(ch1, ch2)].append(pi)
-				print(f"Window {start}-{end} ms, pair {ch1}-{ch2}, PI: {pi:.3f}")
 		print("PI_storage:", pi_storage)
 		return {
 			"periods_min": periods_min,
