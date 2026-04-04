@@ -2580,80 +2580,41 @@ class Recording:
 		return result
 
 	def multi_channel_spike_analysis_polars(
-			self,
-			channels: list[str],
-			height_std: float = 4.0,
-			maximum_height_std: float = 10.0,
-			min_distance_ms: float = 3.0,
-			extract_waveforms: bool = True,
+		self,
+		channels: list[str],
+		height_std: float = 4.0,
+		maximum_height_std: float = 10.0,
+		min_distance_ms: float = 3.0,
+		extract_waveforms: bool = True,
+		use_referenced: bool = True,  # <-- propagate this
 	):
 		"""
-		Detect spikes across multiple channels.
-
-		Parameters
-		----------
-		channels : list[str]
-			Channel names to analyse (must exist in self.referenced or self.filtered)
-
-		height_std : float
-			Threshold in standard deviations (z-score)
-
-		min_distance_ms : float
-			Minimum distance between spikes in milliseconds
-
-		extract_waveforms : bool
-			Whether to extract spike waveforms
+		Run spike analysis across multiple channels using the single-channel pipeline.
 
 		Returns
 		-------
 		dict
 			{
-				channel_name : {
-					"indices": np.ndarray,
-					"times": np.ndarray,
-					"peaks": np.ndarray,
-					"waveforms": np.ndarray | None,
-					"mean_waveform": np.ndarray | None,
-					"std_waveform": np.ndarray | None,
-					"isi_ms": np.ndarray | None
-				}
+				channel_name : single_channel_result_dict
 			}
-	"""
-		fs = self.fs
-		min_distance_samples = int(min_distance_ms / 1000 * fs)
-
-		# Choose referenced if available
-		if hasattr(self, "referenced") and self.referenced is not None:
-			df = self.referenced
-		else:
-			df = self.filtered
+		"""
 
 		results = {}
 
-		# waveform window (±2 ms)
-		waveform_window = int(2 * fs / 1000)
-
 		for ch in channels:
+			print(f"\nProcessing channel: {ch}")
 
-			series = df[ch]
-			signal = series.to_numpy()
-
-			# --- Standardize signal ---
-			z_signal = zscore(signal, nan_policy="omit")
-
-			# --- Detect peaks ---
-			sigma = signal.std()
-			threshold = height_std * sigma
-			max_threshold = maximum_height_std * sigma
-			peaks, properties = find_peaks(
-				z_signal,
-				height=(threshold, max_threshold),
-				prominence=0.0001*sigma,
-				distance=min_distance_samples
+			result = self.single_channel_spike_analysis_polars(
+				channel=ch,
+				height_std=height_std,
+				maximum_height_std=maximum_height_std,
+				min_distance_ms=min_distance_ms,
+				extract_waveforms=extract_waveforms,
+				use_referenced=use_referenced,  # <-- critical for consistency
 			)
 
-			if len(peaks) == 0:
-
+			# Normalize empty case to match previous multi-channel contract
+			if result["indices"] is None or len(result["indices"]) == 0:
 				results[ch] = {
 					"indices": None,
 					"times": None,
@@ -2661,55 +2622,11 @@ class Recording:
 					"waveforms": None,
 					"mean_waveform": None,
 					"std_waveform": None,
-					"isi_ms": None
+					"durations_samples": None,
+					"isi_ms": None,
 				}
-
-				continue
-
-			spike_times_sec = peaks / fs
-			spike_peaks = signal[peaks]
-
-			waveforms = None
-			mean_waveform = None
-			std_waveform = None
-
-			# --- Waveform extraction ---
-			if extract_waveforms:
-
-				wf_list = []
-
-				for idx in peaks:
-
-					start = max(0, idx - waveform_window)
-					end = min(len(signal), idx + waveform_window)
-
-					wf = signal[start:end]
-
-					# pad if needed
-					if len(wf) < 2 * waveform_window:
-						pad = 2 * waveform_window - len(wf)
-						wf = np.pad(wf, (0, pad))
-
-					wf_list.append(wf)
-
-				waveforms = np.array(wf_list)
-
-				mean_waveform = waveforms.mean(axis=0)
-				std_waveform = waveforms.std(axis=0)
-
-			# --- ISI calculation ---
-			spike_times_ms = spike_times_sec * 1000
-			isi = np.diff(spike_times_ms) if len(spike_times_ms) > 1 else None
-
-			results[ch] = {
-				"indices": peaks,
-				"times": spike_times_sec,
-				"peaks": spike_peaks,
-				"waveforms": waveforms,
-				"mean_waveform": mean_waveform,
-				"std_waveform": std_waveform,
-				"isi_ms": isi,
-			}
+			else:
+				results[ch] = result
 
 		return results
 	
@@ -3080,8 +2997,6 @@ class Recording:
 
 				spikes1 = spikes_window.get("ch_" + str(ch1), [])
 				spikes2 = np.array(spikes_window.get("ch_" + str(ch2), []))
-				print("spikes1, spikes2:", spikes1, spikes2)
-				print("spikes in window - %s: %s, %s: %s" %(ch1, spikes1, ch2, spikes2))
 				if len(spikes1) == 0 or len(spikes2) == 0:
 					print("No spikes in one of the channels for this window, skipping pair %s-%s" %(ch1, ch2))
 					pi_storage[(ch1, ch2)].append(np.nan)
@@ -3098,7 +3013,7 @@ class Recording:
 
 					delays.extend(relevant - spike1)
 				if len(delays) == 0:
-					print("No valid delays found for this pair, appending NaN")
+
 					pi_storage[(ch1, ch2)].append(np.nan)
 					continue
 
