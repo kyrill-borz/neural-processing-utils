@@ -1466,7 +1466,7 @@ def load_all_ports_rhs(path, fileType='rhs', downsample=1, verbose=0):
     return df_by_port, fs, all_channel_info, df_all
 
 
-def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=False, load_multiple_files=False, fileType='rhs', downsample=1, day='', verbose=1):
+def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=False, load_multiple_files=False, fileType='rhs', downsample=1, day='', verbose=1, return_lazy=True):
     """This method loads multichannel neural data with memory-efficient streaming.
 
     .. note: Uses lazy loading and memory mapping for large datasets (31+ channels, 40+ min recordings)
@@ -1481,10 +1481,13 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
                     a previously stored csv or pkl with the dataframe
     downsample: [int] (default: 1) downsampling factor.
     verbose:    [int] signal to display text information (default 1 - show text)
+    return_lazy: [boolean] (default: True) Return LazyFrame when possible for memory efficiency.
+                 Set False to return eager DataFrame for immediate operations.
 
     Returns
     -------
-    neural:     [LazyFrame/DataFrame] Polars LazyFrame for efficient querying, or DataFrame for small slices
+    neural:     [LazyFrame or DataFrame] Polars LazyFrame for efficient querying (if return_lazy=True),
+                or DataFrame for immediate access
     fs:         [float] Sampling frequency
     basename_without_ext: [string] name of the file without the extension. For storing purposes
     information: [DataFrame] Channel metadata
@@ -1780,7 +1783,19 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
                 print(f"Saving impedance per day into: {path_rat}")
             save_impedance_data(intan_ch, Z_magnitude, day, path_rat)
 
-    return neural, fs, basename_without_ext, information
+        # -------------------------------------------------
+        # Return lazy or eager based on return_lazy parameter
+        # -------------------------------------------------
+        if return_lazy:
+            if verbose:
+                print(f"Returning LazyFrame from parquet for memory efficiency")
+            neural_lazy = pl.scan_parquet(str(output_path))
+            # Apply slicing lazily if needed
+            if stop is not None:
+                neural_lazy = neural_lazy.slice(start, stop - start)
+            return neural_lazy, fs, basename_without_ext, information
+        else:
+            return neural, fs, basename_without_ext, information
 
 def load_all_ports_rhs(path,fileType='rhs', downsample=1,verbose=1):
     """
