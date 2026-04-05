@@ -91,7 +91,7 @@ class Recording:
 		
 		Parameters
 		------------
-		neural: dataframe 
+		neural: LazyFrame or DataFrame (supports both lazy and eager execution)
 		fs: scalar
 		length: lenth of neural dataframe 
 		map_array:
@@ -104,7 +104,7 @@ class Recording:
 
 		"""
 		#self.recording = neural.neural_b
-		self.recording = neural	# Initialise with dataframe
+		self.recording = neural	# Initialise with dataframe or LazyFrame
 		self.recording.name = 'original'
 		self.original = neural   # keep a copy of the original 
 		self.original.name = 'original'   # keep a copy of the original 
@@ -126,6 +126,7 @@ class Recording:
 		self.thresh_type = []	
 		self.channels = []
 		self.results=[]
+		self._is_lazy = isinstance(neural, pl.LazyFrame)  # Track if using lazy evaluation
 
 	@classmethod
 	def open_record(cls, path,start, dur=None, load_multiple_files=False, downsample=1, port='Port B', map_path=None, pig=False, day='', verbose=1):
@@ -177,29 +178,38 @@ class Recording:
 												fileType=fileType, 
 												downsample=downsample,
 												day=day, # Added Feb 2024 to account for chonic data
-												verbose=verbose)
-		'''
-		neural,fs, basename_without_ext, intan_ch = load_data_dask(path, start=start, dur=dur, port=port, 
-											load_from_file=load_from_file,
-											load_multiple_files=load_multiple_files,
-											downsample=downsample,
-											verbose=verbose)
-		'''
-		neural = neural_lazy.collect()
-		print(neural)
-		length = len(neural)
-		print(length)
-		#print(information)
+											verbose=verbose,
+											return_lazy=True)  # Keep as lazy for optimization
+		
+		# Note: We DO NOT collect here anymore - keep data lazy throughout pipeline
+		# Data will be collected only when needed (e.g., for spike detection, display)
+		print(type(neural_lazy).__name__)  # Print LazyFrame or DataFrame
+		
+		# For length, we need to get it from the lazy frame schema or peek at one collect
+		if isinstance(neural_lazy, pl.LazyFrame):
+			# To get length without full materialization, collect the entire thing 
+			# Note: We have to do this once to know length, but then lazy operations reuse the cached data
+			try:
+				print("Getting length from LazyFrame...")
+				neural_collected = neural_lazy.collect()
+				length = len(neural_collected)
+				# Convert back to lazy for memory efficiency
+				neural_lazy = neural_collected.lazy()
+				print(f"Length determined: {length} samples")
+			except Exception as e:
+				print(f"Could not determine length: {e}")
+				length = 0
+		else:
+			length = len(neural_lazy)
+		print(f"Estimated/Confirmed length: {length}")
+		
+		if map_path is not None:
+			map_df = pd.read_csv(map_path)
+			map_array = map_df.to_numpy()
+		else:
+			map_array = askopenfile(initialdir=path,title="Select electrode map csv file", filetypes=[("CSV files", "*.csv")])
+			map_array = map_array.to_numpy()
 
-		# Load electrode map
-		if map_path is None:
-			Tk().withdraw()  # keep the root window from appearing
-			map_filepath = askopenfile(initialdir=path, title="Select electrode map .csv",
-										filetypes=[("map", ".csv")])
-		else: 
-			map_filepath=map_path
-		map_array = pd.read_csv(map_filepath, header=None)
-		map_array = map_array.to_numpy()
 		map_array = map_array.flatten()
 		
 		try:	
@@ -212,24 +222,38 @@ class Recording:
 		
 		print("Data loaded succesfully.")
 		print('Sampling frequency: %s' %fs)
-		print('Recording length: %s(samples), %s(s): ' %(length, length/fs))
-		return cls(neural, fs, length, map_array, basename_without_ext, information) #intan_ch, Z_magnitude, Z_phase)
+		if length is not None:
+			print('Recording length: %s(samples), %s(s): ' %(length, length/fs))
+		else:
+			print('Recording length: Will be determined on collection')
+		# Pass lazy frame to constructor - no immediate materialization
+		return cls(neural_lazy, fs, length, map_array, basename_without_ext, information)
 	
 	def export(self, folder_path):
 		os.makedirs(folder_path, exist_ok=True)
 
+		# Helper to collect if lazy before writing
+		def collect_and_write(data, filepath):
+			if isinstance(data, pl.LazyFrame):
+				data.collect().write_parquet(filepath)
+			elif isinstance(data, pl.DataFrame):
+				data.write_parquet(filepath)
+
 		if self.recording is not None:
-			self.recording.write_parquet(
-                os.path.join(folder_path, "raw_signal.parquet")
-            )
+			collect_and_write(
+				self.recording,
+				os.path.join(folder_path, "raw_signal.parquet")
+			)
 		if self.filtered is not None:
-			self.filtered.write_parquet(
-                os.path.join(folder_path, "filtered.parquet")
-            )
+			collect_and_write(
+				self.filtered,
+				os.path.join(folder_path, "filtered.parquet")
+			)
 		if self.referenced is not None:
-			self.referenced.write_parquet(
-                os.path.join(folder_path, "referenced.parquet")
-            )
+			collect_and_write(
+				self.referenced,
+				os.path.join(folder_path, "referenced.parquet")
+			)
 		spike_rows = []
 		# for ch, spikes in self.spike_data["spike_times"].items():
 		# 	for s in spikes:
@@ -472,58 +496,51 @@ class Recording:
 	# ---------------------------------------------------------------------------
 	# Filtering methods 
 	# ---------------------------------------------------------------------------
-	def filter(self, signal2filt,filtername, channels=['ch_27'], **kargs, ):
+	def filter(self, signal2filt, filtername, channels=['ch_27'], **kargs):
 		"""
 		Method to apply filtering to recordings (ENG)
+		Supports both LazyFrame and DataFrame for efficient memory usage.
+		
 		Note that despite the whole dataframe is passed, the algorithm only applies to the selected channels (filter_ch)
 
 		Parameters
 		------------
-		signal2filt: [dataframe] signals to filter (columns in dataframe structure)
-		filtername:	 [string] name of the filter to apply {'None', 'butter', 'fir', 'notch'}
-		kargs:		 [dict] specific parameters for for the filters
+		signal2filt: [LazyFrame or DataFrame] signals to filter (columns in dataframe structure)
+		filtername: [string] name of the filter to apply {'None', 'butter', 'fir', 'notch'}
+		kargs: [dict] specific parameters for the filters
 
 		Returns
 		------------
-		self.filtered: [dataframe] updare the recording object with a parameter that is a dataframe with the results of the filtering
-
+		self.filtered: [LazyFrame or DataFrame] filtered signal (maintains lazy/eager type from input)
 		"""
-		if filtername=='No Filter':
-			self.filtered = self.recording
+		is_lazy = isinstance(signal2filt, pl.LazyFrame)
+		
+		# Convert to eager if lazy for certain filter types that require column operations
+		if is_lazy and filtername in ['butter_non_causal', 'fir', 'notch']:
+			signal2filt = signal2filt.collect()
+			is_lazy = False
+		
+		if filtername == 'No Filter':
+			self.filtered = signal2filt
 			print('No filter applied!')
-			pass
-		elif filtername=="Automatic":
 			
+		elif filtername == "Automatic":
 			print('Applying automatic filter selection')
+			# Collect if lazy for adaptive_filter compatibility
+			signal_eager = signal2filt.collect() if is_lazy else signal2filt
 			self.filtered, metadata = adaptive_filter(
-				self.original,
+				signal_eager,
 				fs=self.fs,
 				channels=self.filter_ch
 			)
 			
-
-		elif filtername=='Butterworth':
+		elif filtername == 'Butterworth':
 			print('Applying Butterworth bandpass')
-			# SOS filter used in gut, VN acute, and all analysis until Feb 2024. It's causal and therefore introduces a delay
-			#-----------------------------
-			# Configure butterworth filter
-			# https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.sosfilt.html#scipy.signal.sosfilt
-			#b, a = signal.butter(**kargs)
-			#w, h = signal.freqs(b, a)
-			#filt_config['butter']['Wn'] = fnorm(filt_config['W'], fs=record.fs).tolist() # The critical frequency or frequencies.
-								# Same as doing (filt_config['W']/(record.fs/2)).tolist()
-			#kargs['butter']['Wn'] = kargs['W']
 			print(kargs)
 			kargs['fs'] = self.fs
-			sos = signal.butter(**kargs, output='sos')  # Coefficients for SOS filter
-
-			# Filter signal: high pass (cutoff at 100Hz)
-			#----------------------------------------------
-			# Old filter
-			#self.recording[self.filter_ch] = signal.lfilter(b, a, self.recording[self.filter_ch])
-			#self.recording[self.filter_ch] = signal.sosfilt(sos, self.recording[self.filter_ch])
-			#----------------------------------
+			sos = signal.butter(**kargs, output='sos')
 			
+			# Apply lazily using map_batches - stays lazy if input is lazy
 			self.filtered = signal2filt.with_columns(
 				[
 					pl.col(col)
@@ -532,72 +549,56 @@ class Recording:
 					for col in self.filter_ch
 				]
 			)
-		elif filtername=='Lowpass':
+			
+		elif filtername == 'Lowpass':
 			print('Applying low pass butter')
-			# SOS filter used in gut, VN acute, and all analysis until Feb 2024. It's causal and therefore introduces a delay
-			#-----------------------------
-			# Configure butterworth filter
-			# https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.sosfilt.html#scipy.signal.sosfilt
-			#b, a = signal.butter(**kargs)
-			#w, h = signal.freqs(b, a)
-			#filt_config['butter']['Wn'] = fnorm(filt_config['W'], fs=record.fs).tolist() # The critical frequency or frequencies.
-								# Same as doing (filt_config['W']/(record.fs/2)).tolist()
-			#kargs['butter']['Wn'] = kargs['W']
 			print(kargs)
 			kargs['fs'] = self.fs
-			sos = signal.butter(**kargs, output='sos')  # Coefficients for SOS filter
-
-			# Filter signal: high pass (cutoff at 100Hz)
-			#----------------------------------------------
-			# Old filter
-			#self.recording[self.filter_ch] = signal.lfilter(b, a, self.recording[self.filter_ch])
-			#self.recording[self.filter_ch] = signal.sosfilt(sos, self.recording[self.filter_ch])
-			#----------------------------------
-			# self.filtered = signal2filt.with_columns(
-			# 	[
-			# 		pl.col(col)
-			# 		.map_batches(lambda s: signal.sosfilt(sos, s.to_numpy()))
-			# 		.alias(col)
-			# 		for col in self.filter_ch
-			# 	]
-			# )
+			sos = signal.butter(**kargs, output='sos')
 			self.filter_ch = channels
 			print(self.filter_ch)
-			df = signal2filt.select(self.filter_ch)
-
-			self.filtered = signal2filt.with_columns(
-				[
-					pl.Series(
-						name=col,
-						values=signal.sosfilt(sos, df[col].to_numpy())
-					)
-					for col in self.filter_ch
-				]
-			)
+			
+			# For lazy frames, we can still use map_batches
+			if is_lazy:
+				self.filtered = signal2filt.with_columns(
+					[
+						pl.col(col)
+						.map_batches(lambda s: signal.sosfilt(sos, s.to_numpy()))
+						.alias(col)
+						for col in self.filter_ch
+					]
+				)
+			else:
+				# For eager dataframes
+				df = signal2filt.select(self.filter_ch)
+				self.filtered = signal2filt.with_columns(
+					[
+						pl.Series(
+							name=col,
+							values=signal.sosfilt(sos, df[col].to_numpy())
+						)
+						for col in self.filter_ch
+					]
+				)
 			print(self.filtered)
-
-		elif filtername=='butter_non_causal':
-			#----------------------------------
-			# New non-causal SOS filter
-			# Replaced signal.sosfilt with signal.filtfilt: This function filters the signal in both the forward and reverse directions, effectively creating a zero-phase, non-causal filter.
-			# Passed sos twice as arguments: filtfilt requires both the forward and reverse filter coefficients, which are identical for SOS filters.
-			# Filter signal: high pass (cutoff at 100Hz)
-
+			
+		elif filtername == 'butter_non_causal':
+			# Requires eager evaluation - collection happens at method start
 			print(kargs)
 			kargs['fs'] = self.fs
-			sos = signal.butter(**kargs, output='sos')  # Coefficients for SOS filter
-			self.filtered = signal2filt.apply(lambda x: signal.filtfilt(sos, sos, x)  # Apply filtfilt
-												if x.name in self.filter_ch else x)
-
-		elif filtername=='fir':
+			sos = signal.butter(**kargs, output='sos')
+			self.filtered = signal2filt.apply(lambda x: signal.filtfilt(sos, sos, x)
+											if x.name in self.filter_ch else x)
+			
+		elif filtername == 'fir':
 			print(self.filter_ch)
+			# Requires eager evaluation
 			self.filtered = signal2filt.apply(lambda x: FIR_smooth(x, **kargs) 
-													if x.name in self.filter_ch else x)
-		elif filtername=='notch':
+												if x.name in self.filter_ch else x)
+		elif filtername == 'notch':
+			# Requires eager evaluation
 			self.filtered = signal2filt.apply(lambda x: self.iir_notch(x, **kargs)
-														if x.name in self.filter_ch else x)
-		# Change from float64 to float 16
-		#self.filtered = convertDfType(self.filtered)
+													if x.name in self.filter_ch else x)
 
 	def iir_notch(self, signal2filt, notch_freq, quality_factor):
 		# Design a notch filter using signal.iirnotch
@@ -2207,7 +2208,7 @@ class Recording:
 		Returns
 		-------
 		pl.DataFrame
-			Bipolar-referenced signals with columns 'ch_i-ch_j'
+			Bipolar-referenced signals with columns 'ch_i'
 		"""
 
 		# Ensure channel list is clean and ordered
@@ -2303,7 +2304,7 @@ class Recording:
 
 	def reference_chunked(
 		self,
-		signal: pl.DataFrame,
+		signal,
 		method: str = "Mean",
 		chunk_size: int = 200_000,
 	):
@@ -2313,7 +2314,16 @@ class Recording:
 		"""
 
 		channels = self.filter_ch
-		n_rows = signal.height
+		
+		# Handle LazyFrame vs DataFrame
+		if hasattr(signal, 'collect'):
+			# LazyFrame - need to collect for height and slicing
+			signal_df = signal.collect()
+		else:
+			# DataFrame
+			signal_df = signal
+			
+		n_rows = signal_df.height
 
 		referenced_chunks = []
 
@@ -2322,7 +2332,7 @@ class Recording:
 			end = min(start + chunk_size, n_rows)
 
 			# Slice chunk
-			chunk = signal.slice(start, end - start)
+			chunk = signal_df.slice(start, end - start)
 
 			# Convert only channel columns to NumPy
 			chunk_np = chunk.select(channels).to_numpy()
@@ -2354,35 +2364,202 @@ class Recording:
 	def apply_referencing(self, method: str):
 		"""
 		Apply referencing to self.filtered and store result in self.referenced
+		Supports both LazyFrame and DataFrame for efficient memory usage.
+		Only collects data when absolutely necessary.
 		"""
 		signal = self.filtered
 
 		if method == "Mean":
 			self.referenced = self.reference_chunked(
 				signal=signal,
-				method="Mean",  # or "Median"
+				method="Mean",
 			)
 		elif method == "Median":
-
-
 			self.referenced = self.reference_chunked(
-					signal=signal,
-					method="Median",  # or "Mean"
-				)
+				signal=signal,
+				method="Median",
+			)
 		elif method == "Bipolar":
 			self.referenced = self.bipolar_referencing_polars(
-				self.filtered, self.filter_ch
+				signal, self.filter_ch
 			)
 		elif method == "Tripolar":
 			self.referenced = self.tripolar_referencing_polars(
-				self.filtered, self.filter_ch, offset=1
+				signal, self.filter_ch, offset=1
 			)
 		elif method == "No Referencing":
-			self.referenced = self.filtered
+			self.referenced = signal
 		else:
 			raise NotImplementedError(f"Referencing method '{method}' not implemented")
 
-		print("finished applying referencing: %s" %method)
+		print("finished applying referencing: %s" % method)
+	
+	def reference_chunked(self, signal, method="Mean"):
+		"""
+		Apply Mean or Median referencing. Works with both LazyFrame and DataFrame.
+		
+		For LazyFrame: Operations stay lazy until collect() is called
+		For DataFrame: Operations execute immediately
+		
+		Parameters
+		----------
+		signal : LazyFrame or DataFrame
+			Input signal to be referenced
+		method : str
+			"Mean" for per-channel mean subtraction
+			"Median" for per-channel median subtraction
+		
+		Returns
+		-------
+		LazyFrame or DataFrame
+			Referenced signal (same type as input)
+		"""
+		is_lazy = isinstance(signal, pl.LazyFrame)
+		
+		if method == "Mean":
+			# Compute per-channel mean and subtract from each value
+			if is_lazy:
+				# For lazy frames, we need to collect to get the means
+				signal_eager = signal.collect()
+			else:
+				signal_eager = signal
+			
+			# Compute mean for each channel
+			means = signal_eager.select(self.filter_ch).mean().to_dict(as_series=False)
+			
+			# Create lazy frame if needed
+			if is_lazy:
+				result = signal_eager.lazy()
+			else:
+				result = signal_eager
+			
+			# Subtract each channel's mean
+			return result.with_columns([
+				(pl.col(ch) - pl.lit(means[ch][0])).alias(ch)
+				for ch in self.filter_ch
+			])
+		
+		elif method == "Median":
+			# Compute per-channel median and subtract from each value
+			if is_lazy:
+				signal_eager = signal.collect()
+			else:
+				signal_eager = signal
+			
+			# Compute median for each channel
+			medians = signal_eager.select(self.filter_ch).median().to_dict(as_series=False)
+			
+			# Create lazy frame if needed
+			if is_lazy:
+				result = signal_eager.lazy()
+			else:
+				result = signal_eager
+			
+			# Subtract each channel's median
+			return result.with_columns([
+				(pl.col(ch) - pl.lit(medians[ch][0])).alias(ch)
+				for ch in self.filter_ch
+			])
+		
+		else:
+			raise ValueError(f"Unknown referencing method: {method}")
+	
+	def bipolar_referencing_polars(self, signal, channels, direction='vertical'):
+		"""
+		Apply bipolar referencing (adjacent channels subtraction).
+		Works with both LazyFrame and DataFrame.
+		
+		Parameters
+		----------
+		signal : LazyFrame or DataFrame
+		channels : list
+			List of channel names used for referencing
+		direction : str
+			'vertical' for channel-to-channel subtraction
+		
+		Returns
+		-------
+		LazyFrame or DataFrame
+		"""
+		is_lazy = isinstance(signal, pl.LazyFrame)
+		result_signal = signal
+		
+		# Subtract each channel from the next one
+		for i in range(len(channels) - 1):
+			ch1 = channels[i]
+			ch2 = channels[i + 1]
+			ref_ch = f"{ch1}"
+			
+			# Create bipolar channel by subtraction
+			result_signal = result_signal.with_columns(
+				(pl.col(ch1) - pl.col(ch2)).alias(ref_ch)
+			)
+		
+		# Keep bipolar channels and time columns if they exist
+		bipolar_channels = [f"{channels[i]}" for i in range(len(channels) - 1)]
+		
+		# Get all columns to see which time columns exist
+		if is_lazy:
+			available_cols = result_signal.collect_schema().names()
+		else:
+			available_cols = result_signal.columns
+		
+		# Add time columns if they exist
+		for col in ['seconds', 'time']:
+			if col in available_cols:
+				bipolar_channels.append(col)
+		
+		return result_signal.select(bipolar_channels)
+	
+	def tripolar_referencing_polars(self, signal, channels, offset=1):
+		"""
+		Apply tripolar referencing (weighted average of adjacent channels).
+		Works with both LazyFrame and DataFrame.
+		
+		Tripolar = (ch[i] - (ch[i-1] + ch[i+1]) / 2)
+		
+		Parameters
+		----------
+		signal : LazyFrame or DataFrame
+		channels : list
+			List of channel names
+		offset : int
+			Distance for neighbor selection
+		
+		Returns
+		-------
+		LazyFrame or DataFrame
+		"""
+		is_lazy = isinstance(signal, pl.LazyFrame)
+		result_signal = signal
+		
+		# Create tripolar channels
+		for i in range(offset, len(channels) - offset):
+			ch_center = channels[i]
+			ch_prev = channels[i - offset]
+			ch_next = channels[i + offset]
+			ref_ch = f"{ch_center}"
+			
+			# Tripolar: center - average of neighbors
+			result_signal = result_signal.with_columns(
+				(pl.col(ch_center) - (pl.col(ch_prev) + pl.col(ch_next)) / 2).alias(ref_ch)
+			)
+		
+		# Keep tripolar channels and time columns if they exist
+		tripolar_channels = [f"{channels[i]}" for i in range(offset, len(channels) - offset)]
+		
+		# Get all columns to see which time columns exist
+		if is_lazy:
+			available_cols = result_signal.collect_schema().names()
+		else:
+			available_cols = result_signal.columns
+		
+		# Add time columns if they exist
+		for col in ['seconds', 'time']:
+			if col in available_cols:
+				tripolar_channels.append(col)
+		
+		return result_signal.select(tripolar_channels)
 	def detect_spikes_single_channel_polars(
 		self,
 		channel: str,
@@ -2394,6 +2571,7 @@ class Recording:
 		"""
 		Detect spikes on a single channel.
 		FIX: Ensure we detect on the same signal we intend to extract from.
+		Automatically collects lazy data when needed.
 		"""
 		fs = self.fs
 		
@@ -2401,6 +2579,10 @@ class Recording:
 		print("using referenced:", use_referenced and self.referenced is not None)
 		df_source = self.referenced if (use_referenced and self.referenced is not None) else self.filtered
 		
+		# Collect if lazy - spike detection requires eager DataFrame
+		if isinstance(df_source, pl.LazyFrame):
+			df_source = df_source.collect()
+			
 		# Convert to numpy once for scipy
 		signal = df_source.select(channel).to_numpy().ravel()
 
@@ -2432,6 +2614,39 @@ class Recording:
 			"threshold": threshold,
 		}
 	
+	def collect_if_lazy(self, data):
+		"""
+		Helper method: Convert LazyFrame to DataFrame if needed.
+		Useful when non-lazy operations are required.
+		
+		Parameters
+		----------
+		data : LazyFrame or DataFrame
+		
+		Returns
+		-------
+		DataFrame
+			Eager DataFrame
+		"""
+		if isinstance(data, pl.LazyFrame):
+			return data.collect()
+		return data
+	
+	def ensure_eager(self, attr_name):
+		"""
+		Ensure a recording attribute is eager (not lazy).
+		Useful before non-lazy operations.
+		
+		Parameters
+		----------
+		attr_name : str
+			Name of attribute to ensure is eager ('original', 'filtered', 'referenced')
+		"""
+		attr = getattr(self, attr_name, None)
+		if attr is not None and isinstance(attr, pl.LazyFrame):
+			print(f"Collecting {attr_name} from lazy to eager...")
+			setattr(self, attr_name, attr.collect())
+	
 	def extract_spike_waveforms_polars(
 		self,
 		channel: str,
@@ -2446,8 +2661,13 @@ class Recording:
 		# Ensure consistency: if detection used referenced, extraction must too
 		df_source = self.referenced if (use_referenced and self.referenced is not None) else self.filtered
 		
-		# Optimization: Select column once
-		signal = df_source.select(channel).to_numpy().ravel()
+		# Optimization: Select column once - handle LazyFrame vs DataFrame
+		if hasattr(df_source, 'collect'):
+			# LazyFrame - need to collect first
+			signal = df_source.select(channel).collect().to_series().to_numpy().ravel()
+		else:
+			# DataFrame
+			signal = df_source.select(channel).to_series().to_numpy().ravel()
 
 		half_window = int(window_ms / 2 / 1000 * self.fs)
 		total_window = 2 * half_window
