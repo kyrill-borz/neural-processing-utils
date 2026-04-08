@@ -4,7 +4,7 @@ import sys
 import json
 import time
 import datetime
-import pycwt
+#import pycwt
 import numpy as np
 from scipy.stats import ks_2samp, expon
 import numpy as np
@@ -15,7 +15,7 @@ import seaborn as sns
 import sklearn as sk
 import imageio
 import itertools
-import scipy.io
+#import scipy.io
 from sklearn.decomposition import PCA, FastICA
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
@@ -25,11 +25,11 @@ import pylab
 #import umap
 import umap.umap_ as umap
 import matplotlib.pyplot as plt
-import tkinter as tk
-from tkinter import *
+#import tkinter as tk
+#from tkinter import *
 # from tkinter import simpledialog
 from sklearn import metrics
-import statistics
+#import statistics
 
 from sklearn import preprocessing
 # Import listed colormap
@@ -46,14 +46,14 @@ import dask.dataframe as dd
 # Scipy
 from scipy import signal
 from scipy.signal import find_peaks, correlate
-from scipy import ndimage
+#from scipy import ndimage
 from scipy.stats import zscore
 # TKinter for selecting files
 from tkinter import Tk	 # from tkinter import Tk for Python 3.x
 from tkinter.filedialog import askopenfile
 
 # Bokeh
-from bokeh.io import output_notebook, show
+from bokeh.io import show #,output_notebook, show
 from bokeh.plotting import figure
 from math import pi
 from bokeh.layouts import gridplot
@@ -2302,65 +2302,6 @@ class Recording:
 
 		return references_df
 
-	def reference_chunked(
-		self,
-		signal,
-		method: str = "Mean",
-		chunk_size: int = 200_000,
-	):
-		"""
-		Memory-safe common reference (mean or median).
-		Processes the dataframe in row chunks.
-		"""
-
-		channels = self.filter_ch
-		
-		# Handle LazyFrame vs DataFrame
-		if hasattr(signal, 'collect'):
-			# LazyFrame - need to collect for height and slicing
-			signal_df = signal.collect()
-		else:
-			# DataFrame
-			signal_df = signal
-			
-		n_rows = signal_df.height
-
-		referenced_chunks = []
-
-		for start in range(0, n_rows, chunk_size):
-
-			end = min(start + chunk_size, n_rows)
-
-			# Slice chunk
-			chunk = signal_df.slice(start, end - start)
-
-			# Convert only channel columns to NumPy
-			chunk_np = chunk.select(channels).to_numpy()
-
-			# Compute row reference
-			if method == "Mean":
-				ref = chunk_np.mean(axis=1, keepdims=True)
-
-			elif method == "Median":
-				ref = np.median(chunk_np, axis=1, keepdims=True)
-
-			else:
-				raise ValueError("Method must be 'Mean' or 'Median'")
-
-			# Subtract reference
-			referenced_np = chunk_np - ref
-
-			# Convert back to Polars
-			referenced_chunk = pl.DataFrame(
-				referenced_np,
-				schema=channels,
-			)
-
-			referenced_chunks.append(referenced_chunk)
-
-		# Concatenate chunks
-		return pl.concat(referenced_chunks)
-
 	def apply_referencing(self, method: str):
 		"""
 		Apply referencing to self.filtered and store result in self.referenced
@@ -2565,7 +2506,7 @@ class Recording:
 		channel: str,
 		height_std: float = 4.0,
 		maximum_height_std: float = 10.0,
-		min_distance_ms: float = 3.0,
+		min_distance_ms: float = 5.0,
 		use_referenced: bool = True, # Add this flag
 	):
 		"""
@@ -2574,9 +2515,8 @@ class Recording:
 		Automatically collects lazy data when needed.
 		"""
 		fs = self.fs
-		
-		# CRITICAL FIX: Select the source signal explicitly
-		print("using referenced:", use_referenced and self.referenced is not None)
+
+		#print("using referenced:", use_referenced and self.referenced is not None)
 		df_source = self.referenced if (use_referenced and self.referenced is not None) else self.filtered
 		
 		# Collect if lazy - spike detection requires eager DataFrame
@@ -2593,14 +2533,14 @@ class Recording:
 
 		# Minimum distance in samples
 		min_distance_samples = int(min_distance_ms / 1000 * fs)
+		width = int(0.5e-3 * fs) 
 
-		# Detect peaks
-		from scipy.signal import find_peaks
 		indices, properties = find_peaks(
 			signal,
 			height=(threshold, max_threshold),
-			prominence=0.01*sigma,
+			prominence=1*sigma,
 			distance=min_distance_samples,
+			width=width,
 		)
 
 		indices = pl.Series("indices", indices, dtype=pl.Int64)
@@ -2659,6 +2599,7 @@ class Recording:
 		FIX: Explicitly match the source signal used in detection.
 		"""
 		# Ensure consistency: if detection used referenced, extraction must too
+		print("using referenced:", use_referenced and self.referenced is not None)
 		df_source = self.referenced if (use_referenced and self.referenced is not None) else self.filtered
 		
 		# Optimization: Select column once - handle LazyFrame vs DataFrame
@@ -2751,6 +2692,7 @@ class Recording:
 		height_std: float = 4.0,
 		maximum_height_std: float = 10.0,
 		min_distance_ms: float = 3.0,
+		waveform_width_ms: float = 2.0,
 		extract_waveforms: bool = True,
 		use_referenced: bool = True, # Pass this through
 	):
@@ -2782,7 +2724,8 @@ class Recording:
 			waveforms = self.extract_spike_waveforms_polars(
 				channel=channel,
 				spike_indices=result["indices"].to_numpy(), # Ensure numpy array
-				use_referenced=use_referenced
+				use_referenced=use_referenced,
+				window_ms=waveform_width_ms,
 			)
 
 			mean_wf, std_wf = self.compute_average_waveform_polars(waveforms)
