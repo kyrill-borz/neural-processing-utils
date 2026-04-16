@@ -5,7 +5,7 @@
 # Modified Adrian Foy Sep 2018
 
 import sys, struct
-from intanutil.qstring import read_qstring
+from .qstring import read_qstring
 
 
 def read_header(fid):
