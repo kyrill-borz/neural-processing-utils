@@ -11,9 +11,9 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 import polars as pl
-import seaborn as sns
+#import seaborn as sns
 import sklearn as sk
-import imageio
+#import imageio
 import itertools
 #import scipy.io
 from sklearn.decomposition import PCA, FastICA
@@ -59,7 +59,7 @@ from math import pi
 from bokeh.layouts import gridplot
 
 # Superparamagnetic clustering
-from spclustering import SPC #, plot_temperature_plot  https://github.com/ferchaure/SPC
+#from spclustering import SPC #, plot_temperature_plot  https://github.com/ferchaure/SPC
 
 # Add my module to python path
 sys.path.append("../")
@@ -207,7 +207,8 @@ class Recording:
 			map_df = pd.read_csv(map_path)
 			map_array = map_df.to_numpy()
 		else:
-			map_array = askopenfile(initialdir=path,title="Select electrode map csv file", filetypes=[("CSV files", "*.csv")])
+			map_data = askopenfile(initialdir=path,title="Select electrode map csv file", filetypes=[("CSV files", "*.csv")])
+			map_array = pd.read_csv(map_data.name)
 			map_array = map_array.to_numpy()
 
 		map_array = map_array.flatten()
@@ -2108,91 +2109,91 @@ class Recording:
 		print(result)
 		return result
 
-	def gif(self, dataframe, topo_plot, samples, normalize=True, path='', make_contour=False, 
-			plot_channels=True, plot_clabels=False, INTERP_POINTS=1000, show_plot=False, 
-			make_gif=False, bar_title='Voltage [uV]'):
+	# def gif(self, dataframe, topo_plot, samples, normalize=True, path='', make_contour=False, 
+	# 		plot_channels=True, plot_clabels=False, INTERP_POINTS=1000, show_plot=False, 
+	# 		make_gif=False, bar_title='Voltage [uV]'):
 
-		"""
-		dataframe: needs to have 'ch_x' as columns so that they can be filtered
-		"""
-		filenames = []
+	# 	"""
+	# 	dataframe: needs to have 'ch_x' as columns so that they can be filtered
+	# 	"""
+	# 	filenames = []
 		
-		if normalize:
-			signal = dataframe.apply(lambda x: preprocessing.normalize(x.values.reshape(1, -1)).flatten()
-						if x.name in self.filter_ch else x)
-			data_array = signal[self.filter_ch].T.to_numpy()
-			text = 'Normalised - '
-		else:
-			signal = dataframe
-			data_array = signal[self.filter_ch].T.to_numpy()
-			text = ""
+	# 	if normalize:
+	# 		signal = dataframe.apply(lambda x: preprocessing.normalize(x.values.reshape(1, -1)).flatten()
+	# 					if x.name in self.filter_ch else x)
+	# 		data_array = signal[self.filter_ch].T.to_numpy()
+	# 		text = 'Normalised - '
+	# 	else:
+	# 		signal = dataframe
+	# 		data_array = signal[self.filter_ch].T.to_numpy()
+	# 		text = ""
 
-		if topo_plot == "SC_topo":
-			# Load locations file, specific for circular-structure locations
-			Tk().withdraw() 
-			if path=='':
-				print("ERROR: Provide path for locations file")
-				sys.exit()
-			else:
-				filepath = askopenfile(initialdir=path, title="Select 'locations' file (.csv)")
-				locations = pd.read_csv(filepath)
+	# 	if topo_plot == "SC_topo":
+	# 		# Load locations file, specific for circular-structure locations
+	# 		Tk().withdraw() 
+	# 		if path=='':
+	# 			print("ERROR: Provide path for locations file")
+	# 			sys.exit()
+	# 		else:
+	# 			filepath = askopenfile(initialdir=path, title="Select 'locations' file (.csv)")
+	# 			locations = pd.read_csv(filepath)
 		
-		# Start running figures for creating the gif
-		for sample in samples:
-			if topo_plot == "SC_topo":
-				# SC topo
-				SC_topo_function(self.filter_ch, data_array[:,sample], 
-									make_contour, locations, plot_channels, plot_clabels, INTERP_POINTS, bar_title)
-				plt.title('%s SC Topograph at time %s ms' %(text,"{:.4f}".format((sample/self.fs)))) 
-			elif topo_plot == "rectangular_topo":
-				# Rectangular plot following the structure given by map_array
-				plt.figure()
-				z = np.zeros(len(self.map_array)) # For heatmap
-				for n, j in enumerate(self.ch_loc):
-					if np.isnan(self.map_array[j]):
-						z[j] = np.nan
-						pass
-					else:
-						# Get channel
-						ch = 'ch_%s'%int(self.map_array[j])
-						# Creating the array for heatmap
-						z[j] = signal[ch].iloc[sample]
-				z = np.reshape(z,(self.num_rows,self.num_columns))				
-				""" 
-				# Using matplot: more ugly
-				z_matplot = np.flipud(z)
-				plt.pcolormesh(z_matplot)
-				clb = plt.colorbar()
-				clb.ax.set_title('Amplitude/uV')
-				"""
-				# Using dataframe seaborn
-				df = pd.DataFrame(z) #, index=Index, columns=Cols)
-				sns.heatmap(df, annot=True)
-				plt.title('%s Activation map at time %s ms' %(text,"{:.5f}".format(sample/int(self.fs)))) 								
-				# Uncomment if show() [stops the run]
-				if show_plot==True:
-					plt.show()
-				else:
-					print('Plot will not show')
-					plt.close()
+	# 	# Start running figures for creating the gif
+	# 	for sample in samples:
+	# 		if topo_plot == "SC_topo":
+	# 			# SC topo
+	# 			SC_topo_function(self.filter_ch, data_array[:,sample], 
+	# 								make_contour, locations, plot_channels, plot_clabels, INTERP_POINTS, bar_title)
+	# 			plt.title('%s SC Topograph at time %s ms' %(text,"{:.4f}".format((sample/self.fs)))) 
+	# 		elif topo_plot == "rectangular_topo":
+	# 			# Rectangular plot following the structure given by map_array
+	# 			plt.figure()
+	# 			z = np.zeros(len(self.map_array)) # For heatmap
+	# 			for n, j in enumerate(self.ch_loc):
+	# 				if np.isnan(self.map_array[j]):
+	# 					z[j] = np.nan
+	# 					pass
+	# 				else:
+	# 					# Get channel
+	# 					ch = 'ch_%s'%int(self.map_array[j])
+	# 					# Creating the array for heatmap
+	# 					z[j] = signal[ch].iloc[sample]
+	# 			z = np.reshape(z,(self.num_rows,self.num_columns))				
+	# 			""" 
+	# 			# Using matplot: more ugly
+	# 			z_matplot = np.flipud(z)
+	# 			plt.pcolormesh(z_matplot)
+	# 			clb = plt.colorbar()
+	# 			clb.ax.set_title('Amplitude/uV')
+	# 			"""
+	# 			# Using dataframe seaborn
+	# 			df = pd.DataFrame(z) #, index=Index, columns=Cols)
+	# 			sns.heatmap(df, annot=True)
+	# 			plt.title('%s Activation map at time %s ms' %(text,"{:.5f}".format(sample/int(self.fs)))) 								
+	# 			# Uncomment if show() [stops the run]
+	# 			if show_plot==True:
+	# 				plt.show()
+	# 			else:
+	# 				print('Plot will not show')
+	# 				plt.close()
 			
-			if make_gif:
-				# create file name and append it to a list
-				filename = 'gif_figures/%s.png' %sample
-				filenames.append(filename)
-				# save frame
-				plt.savefig(filename)
-				plt.close()
+	# 		if make_gif:
+	# 			# create file name and append it to a list
+	# 			filename = 'gif_figures/%s.png' %sample
+	# 			filenames.append(filename)
+	# 			# save frame
+	# 			plt.savefig(filename)
+	# 			plt.close()
 
-		if make_gif:
-			# build gif
-			with imageio.get_writer('%s/gif_activation.gif'%path, mode='I', loop=0) as writer:
-				for filename in filenames:
-					image = imageio.imread(filename)
-					writer.append_data(image)
-			# Remove files
-			for filename in set(filenames):
-				os.remove(filename)
+	# 	if make_gif:
+	# 		# build gif
+	# 		with imageio.get_writer('%s/gif_activation.gif'%path, mode='I', loop=0) as writer:
+	# 			for filename in filenames:
+	# 				image = imageio.imread(filename)
+	# 				writer.append_data(image)
+	# 		# Remove files
+	# 		for filename in set(filenames):
+	# 			os.remove(filename)
 
 	def bipolar_referencing_polars(self, signal: pl.DataFrame, filter_ch: list[str]) -> pl.DataFrame:
 		"""
@@ -2725,7 +2726,7 @@ class Recording:
 				channel=channel,
 				spike_indices=result["indices"].to_numpy(), # Ensure numpy array
 				use_referenced=use_referenced,
-				window_ms=waveform_width_ms,
+				window_ms=min_distance_ms,
 			)
 
 			mean_wf, std_wf = self.compute_average_waveform_polars(waveforms)
@@ -3297,372 +3298,372 @@ class MyWaveforms:
 	#-------------------------------------------------------------------
 
 
-	def fit_WC3(self,data, spclustering, min_clus=20, elbow_min=0.4, c_ov=0.7, return_metadata=False):
-			'''
-			Super paramagnetic cluster 
-			Removing self from spc.py (https://github.com/ferchaure/SPC) because the funcitons were not detected directly from the class
-			Chaure FJ, Rey HG, Quian Quiroga R. A novel and fully automatic spike sorting implementation with variable number of features. J Neurophysiol , 2018. doi:10.1152/jn.00339.2018.
-			'''
-			classes, sizes= spclustering.run(data, return_sizes=True)
+	# def fit_WC3(self,data, spclustering, min_clus=20, elbow_min=0.4, c_ov=0.7, return_metadata=False):
+	# 		'''
+	# 		Super paramagnetic cluster 
+	# 		Removing self from spc.py (https://github.com/ferchaure/SPC) because the funcitons were not detected directly from the class
+	# 		Chaure FJ, Rey HG, Quian Quiroga R. A novel and fully automatic spike sorting implementation with variable number of features. J Neurophysiol , 2018. doi:10.1152/jn.00339.2018.
+	# 		'''
+	# 		classes, sizes= spclustering.run(data, return_sizes=True)
 
-			maxdiff = np.max(np.diff(sizes[:,1:].astype(int),axis=0),1)
-			maxdiff[maxdiff<0]=0
+	# 		maxdiff = np.max(np.diff(sizes[:,1:].astype(int),axis=0),1)
+	# 		maxdiff[maxdiff<0]=0
 
-			main_cluster = sizes[:,0]
+	# 		main_cluster = sizes[:,0]
 
-			prop = (main_cluster[1:]+maxdiff)/main_cluster[0:-1]
-			aux = next((i for i in range(len(prop)) if prop[i]<elbow_min),np.NaN)+1 #percentaje of the rest
+	# 		prop = (main_cluster[1:]+maxdiff)/main_cluster[0:-1]
+	# 		aux = next((i for i in range(len(prop)) if prop[i]<elbow_min),np.NaN)+1 #percentaje of the rest
 
-			# The next lines if removes the particular case where just a class is found at the 
-			# lowest temperature and with just a small change the rest appears
-			# all together at the next temperature
-			if (not np.isnan(aux)) and spclustering.mintemp==0 and aux==2:
-				aux = next((i for i in range(len(prop)-1) if prop[i+1]<elbow_min),np.NaN)+2 #percentaje of the rest
-			tree = sizes[0:-1,:]
-			clus = np.zeros_like(tree).astype(bool)
+	# 		# The next lines if removes the particular case where just a class is found at the 
+	# 		# lowest temperature and with just a small change the rest appears
+	# 		# all together at the next temperature
+	# 		if (not np.isnan(aux)) and spclustering.mintemp==0 and aux==2:
+	# 			aux = next((i for i in range(len(prop)-1) if prop[i+1]<elbow_min),np.NaN)+2 #percentaje of the rest
+	# 		tree = sizes[0:-1,:]
+	# 		clus = np.zeros_like(tree).astype(bool)
 
-			clus[tree >= min_clus]=1; #only check the ones that cross the thr
-			diffs =  np.diff(tree.astype(int),axis=0)
-			clus = clus  * np.vstack([np.ones_like(clus[1,:]), diffs>min_clus])
+	# 		clus[tree >= min_clus]=1; #only check the ones that cross the thr
+	# 		diffs =  np.diff(tree.astype(int),axis=0)
+	# 		clus = clus  * np.vstack([np.ones_like(clus[1,:]), diffs>min_clus])
 
-			for ii in range(clus.shape[0]):
-				detect = np.nonzero(clus[ii,:])[0]
-				if len(detect>0):
-					clus[ii,:detect[-1]]=1
+	# 		for ii in range(clus.shape[0]):
+	# 			detect = np.nonzero(clus[ii,:])[0]
+	# 			if len(detect>0):
+	# 				clus[ii,:detect[-1]]=1
 
-			elbow = tree.shape[0]
-			if not np.isnan(aux):
-				clus[aux:,:] = 0
-				elbow = aux
+	# 		elbow = tree.shape[0]
+	# 		if not np.isnan(aux):
+	# 			clus[aux:,:] = 0
+	# 			elbow = aux
 
 
-			if return_metadata:
-				metadata = {'method': 'WC3'}
-				allpeaks = np.where(clus)
-				metadata['method_info'] = {'elbow':elbow, 'peaks_temp':allpeaks[0], 'peaks_cl':allpeaks[1]}
+	# 		if return_metadata:
+	# 			metadata = {'method': 'WC3'}
+	# 			allpeaks = np.where(clus)
+	# 			metadata['method_info'] = {'elbow':elbow, 'peaks_temp':allpeaks[0], 'peaks_cl':allpeaks[1]}
 
-			for ti in reversed(range(elbow)):
-				detect = np.where(clus[ti,:])[0]
-				for dci in detect:
-					cl = classes[ti,:] == dci
-					for tj in np.arange(ti-1,-1,-1):
-						toremove = np.where(clus[tj,:])[0]
-						for rj in toremove:
-							totest = classes[tj,:] == rj
-							if sum(cl * totest)/min(sum(totest),sum(cl)) >= c_ov:
-								clus[tj,rj]=0
+	# 		for ti in reversed(range(elbow)):
+	# 			detect = np.where(clus[ti,:])[0]
+	# 			for dci in detect:
+	# 				cl = classes[ti,:] == dci
+	# 				for tj in np.arange(ti-1,-1,-1):
+	# 					toremove = np.where(clus[tj,:])[0]
+	# 					for rj in toremove:
+	# 						totest = classes[tj,:] == rj
+	# 						if sum(cl * totest)/min(sum(totest),sum(cl)) >= c_ov:
+	# 							clus[tj,rj]=0
 			
-			temp, clust_num = np.where(clus)
-			c = 1 #initial class
-			labels = np.zeros(classes.shape[1], dtype=int)
-			for tx,cx in zip(temp, clust_num):
-				labels[classes[tx,:]== cx] = c
-				c += 1
+	# 		temp, clust_num = np.where(clus)
+	# 		c = 1 #initial class
+	# 		labels = np.zeros(classes.shape[1], dtype=int)
+	# 		for tx,cx in zip(temp, clust_num):
+	# 			labels[classes[tx,:]== cx] = c
+	# 			c += 1
 
-			if return_metadata:
-				metadata['clusters_info']={i+1: {'index':clust_num[i], 'itemp':ti} for i,ti in enumerate(temp)}
-				metadata['sizes'] = sizes
-				metadata['temperatures'] = spclustering.temp_vector.copy()
-				return labels, metadata
-			return labels
+	# 		if return_metadata:
+	# 			metadata['clusters_info']={i+1: {'index':clust_num[i], 'itemp':ti} for i,ti in enumerate(temp)}
+	# 			metadata['sizes'] = sizes
+	# 			metadata['temperatures'] = spclustering.temp_vector.copy()
+	# 			return labels, metadata
+	# 		return labels
 
-	def plot_temperature_plot(self,metadata,ax=None):
-		if ax is None:
-			fig = plt.figure()
-			ax = fig.add_subplot(111)
-		ax.set_yscale('log')
-		ax.plot(metadata['temperatures'],metadata['sizes'])
-		ax.set_prop_cycle(None)
-		if metadata['method'] == 'WC3':
-			ax.axvline(metadata['temperatures'][metadata['method_info']['elbow']],color='k',linestyle='--')
-			ax.plot(metadata['temperatures'][metadata['method_info']['peaks_temp']],
-				metadata['sizes'][metadata['method_info']['peaks_temp'],metadata['method_info']['peaks_cl']],color='k',alpha=0.5,marker='x',linestyle='',markersize=8)
+	# def plot_temperature_plot(self,metadata,ax=None):
+	# 	if ax is None:
+	# 		fig = plt.figure()
+	# 		ax = fig.add_subplot(111)
+	# 	ax.set_yscale('log')
+	# 	ax.plot(metadata['temperatures'],metadata['sizes'])
+	# 	ax.set_prop_cycle(None)
+	# 	if metadata['method'] == 'WC3':
+	# 		ax.axvline(metadata['temperatures'][metadata['method_info']['elbow']],color='k',linestyle='--')
+	# 		ax.plot(metadata['temperatures'][metadata['method_info']['peaks_temp']],
+	# 			metadata['sizes'][metadata['method_info']['peaks_temp'],metadata['method_info']['peaks_cl']],color='k',alpha=0.5,marker='x',linestyle='',markersize=8)
 
-		for c,info in metadata['clusters_info'].items():
-			ax.plot(metadata['temperatures'][info['itemp']],
-			metadata['sizes'][info['itemp'],info['index']],'.',markersize=15)
-		ax.set_ylabel('Cluster Sizes')
-		ax.set_xlabel('Temperatures')
+	# 	for c,info in metadata['clusters_info'].items():
+	# 		ax.plot(metadata['temperatures'][info['itemp']],
+	# 		metadata['sizes'][info['itemp'],info['index']],'.',markersize=15)
+	# 	ax.set_ylabel('Cluster Sizes')
+	# 	ax.set_xlabel('Temperatures')
 
 
-	def clustering(self, ch,config, models, method='pca', roll_win=True, window=1, units='s', dtformat='%H:%M:%S', check_num_clusters=False, time_marks=[], show_plot=False,save_figure='png', verbose=False):
-		"""
-		cluster: vector of length equal to the number of peaks identified, with numbers corresponding to the cluster type.
-		"""
+	# def clustering(self, ch,config, models, method='pca', roll_win=True, window=1, units='s', dtformat='%H:%M:%S', check_num_clusters=False, time_marks=[], show_plot=False,save_figure='png', verbose=False):
+	# 	"""
+	# 	cluster: vector of length equal to the number of peaks identified, with numbers corresponding to the cluster type.
+	# 	"""
 		
-		if method=='pca':
-			data = self.pca_result
-		elif method=='tsne':
-			data = self.tsne_result
-		elif method=='umap':
-			data = self.umap_result
-		elif method=='ica':
-			data, _ = self.applyFastICA(self.waveforms, n_components=self.num_clusters, random_state=0)
-		# -----------------
-		# Clustering
-		# -----------------
-		if check_num_clusters:
-			max_num_clusters = 50
-			average_distance = clustering_avg_dis(data, max_num_clusters=max_num_clusters)
+	# 	if method=='pca':
+	# 		data = self.pca_result
+	# 	elif method=='tsne':
+	# 		data = self.tsne_result
+	# 	elif method=='umap':
+	# 		data = self.umap_result
+	# 	elif method=='ica':
+	# 		data, _ = self.applyFastICA(self.waveforms, n_components=self.num_clusters, random_state=0)
+	# 	# -----------------
+	# 	# Clustering
+	# 	# -----------------
+	# 	if check_num_clusters:
+	# 		max_num_clusters = 50
+	# 		average_distance = clustering_avg_dis(data, max_num_clusters=max_num_clusters)
 
-			# Plot elbow graph
-			plot_check_cluster(average_distance, max_num_clusters=max_num_clusters)
-			#sys.exit()
+	# 		# Plot elbow graph
+	# 		plot_check_cluster(average_distance, max_num_clusters=max_num_clusters)
+	# 		#sys.exit()
 
-		# Assign waveforms to clusters
-		for m in models:	
-			cluster = []
-			# define the model
-			if m=='dbscan':
-				time_start=time.time()
-				model = DBSCAN(**config['dbscan'])
-				# fit model and predict clusters
-				cluster = model.fit_predict(data)
-				cluster = cluster+1
-				print ('DBSCAN done! Time elapsed: {} seconds'.format(time.time()-time_start))
-			elif m=='spec':
-				time_start=time.time()
-				model = SpectralClustering(n_clusters=self.num_clusters)
-				# fit model and predict clusters
-				cluster = model.fit_predict(data)
-				print ('SpectralClustering done! Time elapsed: {} seconds'.format(time.time()-time_start))
-			elif m=='kmeans_AG':
-				time_start=time.time()
-				cluster, centers, distance = k_means(data, num_clus=self.num_clusters)
-				print ('kmeans_AG done! Time elapsed: {} seconds'.format(time.time()-time_start))
-			elif m=='superparamc':  #https://github.com/ferchaure/SPC
-				spclustering = SPC(mintemp=config['spc']['mintemp'],maxtemp=config['spc']['maxtemp'])#,randomseed=randomseed)
-				cluster, metadata = self.fit_WC3(data,spclustering,min_clus=config['spc']['min_clus'],return_metadata=True)
-				#It is posible to show a temperature map using the optional output metadata
-				self.plot_temperature_plot(metadata)
-			else:
-				if m=='kmeans':
-					time_start=time.time()
-					model = KMeans(n_clusters=self.num_clusters)
-					print ('KMeans done! Time elapsed: {} seconds'.format(time.time()-time_start))
-				if m=='mini_batch':
-					time_start=time.time()
-					model = MiniBatchKMeans(n_clusters=self.num_clusters)
-					print ('MiniBatchKMeans done! Time elapsed: {} seconds'.format(time.time()-time_start))
-				if m=='birch':
-					time_start=time.time()
-					model = Birch(n_clusters=self.num_clusters, **config['birch'])
-					print ('Birch done! Time elapsed: {} seconds'.format(time.time()-time_start))
-				if m=='gauss':
-					time_start=time.time()
-					model = GaussianMixture(n_components=self.num_clusters)
-					print ('GaussianMixture done! Time elapsed: {} seconds'.format(time.time()-time_start))
-				# fit the model
-				model.fit(data)
-				# assign a cluster to each example
-				cluster = model.predict(data)
-				print(cluster)
-				print(len(cluster))
+	# 	# Assign waveforms to clusters
+	# 	for m in models:	
+	# 		cluster = []
+	# 		# define the model
+	# 		if m=='dbscan':
+	# 			time_start=time.time()
+	# 			model = DBSCAN(**config['dbscan'])
+	# 			# fit model and predict clusters
+	# 			cluster = model.fit_predict(data)
+	# 			cluster = cluster+1
+	# 			print ('DBSCAN done! Time elapsed: {} seconds'.format(time.time()-time_start))
+	# 		elif m=='spec':
+	# 			time_start=time.time()
+	# 			model = SpectralClustering(n_clusters=self.num_clusters)
+	# 			# fit model and predict clusters
+	# 			cluster = model.fit_predict(data)
+	# 			print ('SpectralClustering done! Time elapsed: {} seconds'.format(time.time()-time_start))
+	# 		elif m=='kmeans_AG':
+	# 			time_start=time.time()
+	# 			cluster, centers, distance = k_means(data, num_clus=self.num_clusters)
+	# 			print ('kmeans_AG done! Time elapsed: {} seconds'.format(time.time()-time_start))
+	# 		elif m=='superparamc':  #https://github.com/ferchaure/SPC
+	# 			spclustering = SPC(mintemp=config['spc']['mintemp'],maxtemp=config['spc']['maxtemp'])#,randomseed=randomseed)
+	# 			cluster, metadata = self.fit_WC3(data,spclustering,min_clus=config['spc']['min_clus'],return_metadata=True)
+	# 			#It is posible to show a temperature map using the optional output metadata
+	# 			self.plot_temperature_plot(metadata)
+	# 		else:
+	# 			if m=='kmeans':
+	# 				time_start=time.time()
+	# 				model = KMeans(n_clusters=self.num_clusters)
+	# 				print ('KMeans done! Time elapsed: {} seconds'.format(time.time()-time_start))
+	# 			if m=='mini_batch':
+	# 				time_start=time.time()
+	# 				model = MiniBatchKMeans(n_clusters=self.num_clusters)
+	# 				print ('MiniBatchKMeans done! Time elapsed: {} seconds'.format(time.time()-time_start))
+	# 			if m=='birch':
+	# 				time_start=time.time()
+	# 				model = Birch(n_clusters=self.num_clusters, **config['birch'])
+	# 				print ('Birch done! Time elapsed: {} seconds'.format(time.time()-time_start))
+	# 			if m=='gauss':
+	# 				time_start=time.time()
+	# 				model = GaussianMixture(n_components=self.num_clusters)
+	# 				print ('GaussianMixture done! Time elapsed: {} seconds'.format(time.time()-time_start))
+	# 			# fit the model
+	# 			model.fit(data)
+	# 			# assign a cluster to each example
+	# 			cluster = model.predict(data)
+	# 			print(cluster)
+	# 			print(len(cluster))
 			
-			# Retrieve unique clusters
-			self.unique_clusters = np.unique(cluster)
-			print('unique_clusters: %s' %self.unique_clusters)
+	# 		# Retrieve unique clusters
+	# 		self.unique_clusters = np.unique(cluster)
+	# 		print('unique_clusters: %s' %self.unique_clusters)
 
-			#plt.figure()
-			for i in np.unique(cluster):
-				cluster_mean = self.waveforms[cluster == i, :].mean(axis=0)
-				print('max cluster %s mean: %s' %(i, np.max(cluster_mean)))
-				#if c==0:
-				#	plt.plot(*data[cluster==c,:].T,marker='.',color='k',linestyle='',markersize=3)
-				#else:
-				#	plt.plot(*data[cluster==c,:].T,marker='.',linestyle='',markersize=3)
-				#plt.grid()
-				#plt.title('Labeling')
-				#plt.show()
+	# 		#plt.figure()
+	# 		for i in np.unique(cluster):
+	# 			cluster_mean = self.waveforms[cluster == i, :].mean(axis=0)
+	# 			print('max cluster %s mean: %s' %(i, np.max(cluster_mean)))
+	# 			#if c==0:
+	# 			#	plt.plot(*data[cluster==c,:].T,marker='.',color='k',linestyle='',markersize=3)
+	# 			#else:
+	# 			#	plt.plot(*data[cluster==c,:].T,marker='.',linestyle='',markersize=3)
+	# 			#plt.grid()
+	# 			#plt.title('Labeling')
+	# 			#plt.show()
 
 			
 
-			########################################################
-			"""
-			th_cluster = np.max(self.waveforms.mean(axis=0))/1.2
-			cluster_spikes_vector_loc = self.spikes_vector_loc==1
-			print('th_cluster: %s' %th_cluster)
-			print('len(cluster): %s' %len(cluster))
-			print('len(self.waveforms): %s' % len(self.waveforms))
-			print('len(spikes_vector_loc): %s' % len(spikes_vector_loc))
+	# 		########################################################
+	# 		"""
+	# 		th_cluster = np.max(self.waveforms.mean(axis=0))/1.2
+	# 		cluster_spikes_vector_loc = self.spikes_vector_loc==1
+	# 		print('th_cluster: %s' %th_cluster)
+	# 		print('len(cluster): %s' %len(cluster))
+	# 		print('len(self.waveforms): %s' % len(self.waveforms))
+	# 		print('len(spikes_vector_loc): %s' % len(spikes_vector_loc))
 			
-			# Filter clusters based on amplitude
-			for i in np.unique(cluster):
-				print(i)
-				print(len(self.cluster == i))
-				print(len(self.waveforms))
-				matches = np.where(cluster==i)[0]
-				print('matches %s' %len(matches))
-				#cluster_mean_array = [x for loc,x in enumerate(self.waveforms) if loc in matches]
-				#cluster_mean = .mean(axis=0) #
-				cluster_mean = self.waveforms[self.cluster == i, :].mean(axis=0)
-				#print('cluster_mean: %s' %cluster_mean)
-				if np.max(cluster_mean) < th_cluster:
-					cluster = [x for x in cluster.tolist() if x!=i]
-					cluster_spikes_vector_loc = [x for loc,x in enumerate(spikes_vector_loc) if loc not in matches]
-					#self.waveforms = [x for loc,x in enumerate(self.waveforms) if loc not in matches]
-			self.unique_clusters = np.unique(cluster)
-			self.num_clusters = len(unique_clusters)
-			print('len(cluster): %s' %len(cluster))
-			print('len(self.waveforms): %s' % len(self.waveforms))
-			print('len(spikes_vector_loc): %s' % len(spikes_vector_loc))
-			print('unique_clusters after aplitude filtering: %s' %unique_clusters)		
-			"""	
-			########################################################
+	# 		# Filter clusters based on amplitude
+	# 		for i in np.unique(cluster):
+	# 			print(i)
+	# 			print(len(self.cluster == i))
+	# 			print(len(self.waveforms))
+	# 			matches = np.where(cluster==i)[0]
+	# 			print('matches %s' %len(matches))
+	# 			#cluster_mean_array = [x for loc,x in enumerate(self.waveforms) if loc in matches]
+	# 			#cluster_mean = .mean(axis=0) #
+	# 			cluster_mean = self.waveforms[self.cluster == i, :].mean(axis=0)
+	# 			#print('cluster_mean: %s' %cluster_mean)
+	# 			if np.max(cluster_mean) < th_cluster:
+	# 				cluster = [x for x in cluster.tolist() if x!=i]
+	# 				cluster_spikes_vector_loc = [x for loc,x in enumerate(spikes_vector_loc) if loc not in matches]
+	# 				#self.waveforms = [x for loc,x in enumerate(self.waveforms) if loc not in matches]
+	# 		self.unique_clusters = np.unique(cluster)
+	# 		self.num_clusters = len(unique_clusters)
+	# 		print('len(cluster): %s' %len(cluster))
+	# 		print('len(self.waveforms): %s' % len(self.waveforms))
+	# 		print('len(spikes_vector_loc): %s' % len(spikes_vector_loc))
+	# 		print('unique_clusters after aplitude filtering: %s' %unique_clusters)		
+	# 		"""	
+	# 		########################################################
 
-			# Store clusters
-			self.cluster = cluster
-			self.clustering_method = m
+	# 		# Store clusters
+	# 		self.cluster = cluster
+	# 		self.clustering_method = m
 
-			if roll_win:
-				self.cluster_dataframe = self.cluster_rolling_window(ch, window=window, units=units, verbose=verbose)
+	# 		if roll_win:
+	# 			self.cluster_dataframe = self.cluster_rolling_window(ch, window=window, units=units, verbose=verbose)
 
-			# check the isi is not of noise waveforms
-			#self.discard_isi_cluster()
-			#print('unique_clusters after isi discard: %s' %self.unique_clusters)
+	# 		# check the isi is not of noise waveforms
+	# 		#self.discard_isi_cluster()
+	# 		#print('unique_clusters after isi discard: %s' %self.unique_clusters)
 
-			self.plot_cluster(data, ch, cluster, roll_win, window, units,dtformat, show_plot=show_plot, save=save_figure, time_marks=time_marks)
+	# 		self.plot_cluster(data, ch, cluster, roll_win, window, units,dtformat, show_plot=show_plot, save=save_figure, time_marks=time_marks)
 
 
-	def cluster_rolling_window(self, ch, window,units='s', show_plot=False, verbose=False):
-		"""
-		window: int
-		"""
+	# def cluster_rolling_window(self, ch, window,units='s', show_plot=False, verbose=False):
+	# 	"""
+	# 	window: int
+	# 	"""
 
-		# Compute rolling windiw
-		#-----------------------------
-		nonzero_cluster = [z+1 for z in self.cluster] # plus one to differenciate from 0 in cluster_vector (which means no spike)
-		cluster_vector = self.get_cluster_vector(self.spikes_vector_loc, nonzero_cluster) 
-		cluster_dataframe = pd.DataFrame()
-		cluster_dataframe.index = pd.DatetimeIndex(self.recording.seconds * 1e9) # self.recording in wavelet is self.original
-		cluster_dataframe.index.name = 'time'
+	# 	# Compute rolling windiw
+	# 	#-----------------------------
+	# 	nonzero_cluster = [z+1 for z in self.cluster] # plus one to differenciate from 0 in cluster_vector (which means no spike)
+	# 	cluster_vector = self.get_cluster_vector(self.spikes_vector_loc, nonzero_cluster) 
+	# 	cluster_dataframe = pd.DataFrame()
+	# 	cluster_dataframe.index = pd.DatetimeIndex(self.recording.seconds * 1e9) # self.recording in wavelet is self.original
+	# 	cluster_dataframe.index.name = 'time'
 		
-		for c in self.unique_clusters: # Containes 0
-			# Store in dataframe where waveforms of each cluster appear and the amplitude of the waveforms corresponding to each cluster type 
-			cluster_dataframe['cluster_%s' %c] = cluster_vector==c+1 # plus one to differenciate from 0 in cluster_vector
-			cluster_dataframe['amplitude_c%s'%c] = get_spike_amplitude(self.recording[ch], np.where(cluster_dataframe['cluster_%s'%c]==1)) #When there's a spike (True or 1) in that cluster type 
+	# 	for c in self.unique_clusters: # Containes 0
+	# 		# Store in dataframe where waveforms of each cluster appear and the amplitude of the waveforms corresponding to each cluster type 
+	# 		cluster_dataframe['cluster_%s' %c] = cluster_vector==c+1 # plus one to differenciate from 0 in cluster_vector
+	# 		cluster_dataframe['amplitude_c%s'%c] = get_spike_amplitude(self.recording[ch], np.where(cluster_dataframe['cluster_%s'%c]==1)) #When there's a spike (True or 1) in that cluster type 
 
 
-		# Get metrics in cluster 
-			# Get number of elements in each cluster
-		unique_elements, counts_elements = np.unique(self.cluster, return_counts=True)
+	# 	# Get metrics in cluster 
+	# 		# Get number of elements in each cluster
+	# 	unique_elements, counts_elements = np.unique(self.cluster, return_counts=True)
 
-		print('Number of element in each cluster: %s' % counts_elements)
+	# 	print('Number of element in each cluster: %s' % counts_elements)
 
-		# print(len(neural) / fs)
-		elem_sec = counts_elements / (len(self.recording) / self.fs)  # self.recording in wavelet is self.original
+	# 	# print(len(neural) / fs)
+	# 	elem_sec = counts_elements / (len(self.recording) / self.fs)  # self.recording in wavelet is self.original
 
-		if verbose:
-			print('Number of element in each cluster per second: %s' % elem_sec)
-			print('Number of element in each cluster per minute: %s' % (elem_sec * 60))
+	# 	if verbose:
+	# 		print('Number of element in each cluster per second: %s' % elem_sec)
+	# 		print('Number of element in each cluster per minute: %s' % (elem_sec * 60))
 
-		# Compute metrics on clusters
-		for c in self.unique_clusters:			# rc stands from 'rolling cluster' and c from 'cluster'
-			# Spikes per window
-			cluster_dataframe['rc_%s' %c] = cluster_dataframe['cluster_%s' %c].rolling(window='%s%s' % (int(window), units),
-					  																	min_periods=int(self.fs * window)).sum()  
-			# Spikes per second
-			cluster_dataframe['src_%s' %c] = cluster_dataframe['cluster_%s' %c].rolling(window='%s%s' % (1, units),
-					  																	min_periods=int(self.fs)).sum()  
-			# Percentage of change with respect to previous second
-			cluster_dataframe['pct_rc_%s'%c] = cluster_dataframe['rc_%s'%c].pct_change()*100  # periods=int(self.fs) periods mark the change with respect to which value, in this case respect 1 sec before
-			cluster_dataframe['change_rc_%s'%c] = np.gradient(cluster_dataframe['rc_%s'%c])
+	# 	# Compute metrics on clusters
+	# 	for c in self.unique_clusters:			# rc stands from 'rolling cluster' and c from 'cluster'
+	# 		# Spikes per window
+	# 		cluster_dataframe['rc_%s' %c] = cluster_dataframe['cluster_%s' %c].rolling(window='%s%s' % (int(window), units),
+	# 				  																	min_periods=int(self.fs * window)).sum()  
+	# 		# Spikes per second
+	# 		cluster_dataframe['src_%s' %c] = cluster_dataframe['cluster_%s' %c].rolling(window='%s%s' % (1, units),
+	# 				  																	min_periods=int(self.fs)).sum()  
+	# 		# Percentage of change with respect to previous second
+	# 		cluster_dataframe['pct_rc_%s'%c] = cluster_dataframe['rc_%s'%c].pct_change()*100  # periods=int(self.fs) periods mark the change with respect to which value, in this case respect 1 sec before
+	# 		cluster_dataframe['change_rc_%s'%c] = np.gradient(cluster_dataframe['rc_%s'%c])
 
-			# Mean of amplitudes metric
-			# AG 21/03/2022: TO avoid computation of 0s, substitute by nan and then drop them. 
-			# min_interval needs to be reduced to windowsize (=1) to guarantee there's at least one spike
-			# Leave min_periods to at least the length of the window observations so that it's at least 1Hz(e.g. 10s window, need 10 obbservations for compouting, otherwise
-			# returns np.nan()). Better this way because if it only requires 1 observation, then we can't really see overall changes on clustering dissapearing
-			cluster_dataframe['amplitude_c%s'%c] = cluster_dataframe['amplitude_c%s'%c].replace(0, np.nan)
-			cluster_dataframe['metric_amplitude_c%s' %c] = cluster_dataframe['amplitude_c%s'%c].dropna().rolling(window='%s%s' % (int(window), units),
-																										min_periods=10).mean()  # min_periods=int(self.fs * window)
-			# For plotting purposes, substitute nan by 0
-			cluster_dataframe['metric_amplitude_c%s' %c] = cluster_dataframe['metric_amplitude_c%s' %c].replace(np.nan, 0)
+	# 		# Mean of amplitudes metric
+	# 		# AG 21/03/2022: TO avoid computation of 0s, substitute by nan and then drop them. 
+	# 		# min_interval needs to be reduced to windowsize (=1) to guarantee there's at least one spike
+	# 		# Leave min_periods to at least the length of the window observations so that it's at least 1Hz(e.g. 10s window, need 10 obbservations for compouting, otherwise
+	# 		# returns np.nan()). Better this way because if it only requires 1 observation, then we can't really see overall changes on clustering dissapearing
+	# 		cluster_dataframe['amplitude_c%s'%c] = cluster_dataframe['amplitude_c%s'%c].replace(0, np.nan)
+	# 		cluster_dataframe['metric_amplitude_c%s' %c] = cluster_dataframe['amplitude_c%s'%c].dropna().rolling(window='%s%s' % (int(window), units),
+	# 																									min_periods=10).mean()  # min_periods=int(self.fs * window)
+	# 		# For plotting purposes, substitute nan by 0
+	# 		cluster_dataframe['metric_amplitude_c%s' %c] = cluster_dataframe['metric_amplitude_c%s' %c].replace(np.nan, 0)
 
-			# Percentage of change with respect to previous period
-			cluster_dataframe['pct_amp_%s'%c] = cluster_dataframe['metric_amplitude_c%s'%c].pct_change()*100  # periods=int(self.fs) periods mark the change with respect to which value, in this case respect 1 sec before
-			cluster_dataframe['change_amp_%s'%c] = np.gradient(cluster_dataframe['metric_amplitude_c%s'%c])
-		return cluster_dataframe
+	# 		# Percentage of change with respect to previous period
+	# 		cluster_dataframe['pct_amp_%s'%c] = cluster_dataframe['metric_amplitude_c%s'%c].pct_change()*100  # periods=int(self.fs) periods mark the change with respect to which value, in this case respect 1 sec before
+	# 		cluster_dataframe['change_amp_%s'%c] = np.gradient(cluster_dataframe['metric_amplitude_c%s'%c])
+	# 	return cluster_dataframe
 
-	def discard_isi_cluster(self):
-		# Unify colors of three plots:
-		NUM_COLORS = len(self.unique_clusters)
-		colors=[]
-		cm = pylab.get_cmap('tab20c')  #https://matplotlib.org/stable/tutorials/colors/colormaps.html
-		for i in range(NUM_COLORS):
-			colors.append(cm(1.*i/NUM_COLORS)) # color will now be an RGBA tuple
-		#colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'] # Default color list in python
-		self.colors = colors
-		print(colors)
-		print()
-		#colors = ['#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+	# def discard_isi_cluster(self):
+	# 	# Unify colors of three plots:
+	# 	NUM_COLORS = len(self.unique_clusters)
+	# 	colors=[]
+	# 	cm = pylab.get_cmap('tab20c')  #https://matplotlib.org/stable/tutorials/colors/colormaps.html
+	# 	for i in range(NUM_COLORS):
+	# 		colors.append(cm(1.*i/NUM_COLORS)) # color will now be an RGBA tuple
+	# 	#colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'] # Default color list in python
+	# 	self.colors = colors
+	# 	print(colors)
+	# 	print()
+	# 	#colors = ['#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 
-		print('Discarding clusters based on ISI')
-		fig_a, axes_a = plt.subplots(math.ceil(len(self.unique_clusters)/(math.ceil(len(self.unique_clusters)/3))), math.ceil(len(self.unique_clusters)/3), figsize=(15, 8), sharex=True)
-		fig_a.suptitle('ISI', fontsize=16, family='serif')  
-		axes_a = axes_a.flatten()
-		self.cluster_dataframe['seconds'] = self.recording.seconds
-		original_clusters = self.unique_clusters
-		for i,c in enumerate(original_clusters):
-			s = self.cluster_dataframe['cluster_%s' %c].astype(int)
-			list_pos = self.cluster_dataframe.seconds[s==1]
-			max_isi = self.inter_spike_interv(list_pos, axes_a[c], color=colors[c],  bins=30, myrange=[0,30])
-			print(max_isi)
-			if max_isi < 7:
-				self.unique_clusters = np.delete(original_clusters,i)
-				print('Removing cluster %s, peak ISI at %s' %(c, max_isi))
+	# 	print('Discarding clusters based on ISI')
+	# 	fig_a, axes_a = plt.subplots(math.ceil(len(self.unique_clusters)/(math.ceil(len(self.unique_clusters)/3))), math.ceil(len(self.unique_clusters)/3), figsize=(15, 8), sharex=True)
+	# 	fig_a.suptitle('ISI', fontsize=16, family='serif')  
+	# 	axes_a = axes_a.flatten()
+	# 	self.cluster_dataframe['seconds'] = self.recording.seconds
+	# 	original_clusters = self.unique_clusters
+	# 	for i,c in enumerate(original_clusters):
+	# 		s = self.cluster_dataframe['cluster_%s' %c].astype(int)
+	# 		list_pos = self.cluster_dataframe.seconds[s==1]
+	# 		max_isi = self.inter_spike_interv(list_pos, axes_a[c], color=colors[c],  bins=30, myrange=[0,30])
+	# 		print(max_isi)
+	# 		if max_isi < 7:
+	# 			self.unique_clusters = np.delete(original_clusters,i)
+	# 			print('Removing cluster %s, peak ISI at %s' %(c, max_isi))
 
-	'''
-	def get_cluster_vector(self, spikes_vector_loc=[], cluster=[]):
-		"""
-		Parameters:
-		-------------
-			spikes_vector_loc: numpy array with same size as signal with 1 where there's a spike and 0 otherwise
-			cluster: vector of length equal to the number of peaks identified, with numbers corresponding to the cluster type (+1 to avoid non-spike).
+	# '''
+	# def get_cluster_vector(self, spikes_vector_loc=[], cluster=[]):
+	# 	"""
+	# 	Parameters:
+	# 	-------------
+	# 		spikes_vector_loc: numpy array with same size as signal with 1 where there's a spike and 0 otherwise
+	# 		cluster: vector of length equal to the number of peaks identified, with numbers corresponding to the cluster type (+1 to avoid non-spike).
 
-		Return:
-		-----------
-			cluster_vector: numpy vector with same size as signal with the number of the type of cluster on the locations 
-							where peaks were identified (given by spikes_vector_loc), and 0 otherwise.
-		"""
-		spikes_vector_loc = np.asarray(spikes_vector_loc)
-		cluster = np.asarray(cluster)
-		cluster_vector = np.zeros(len(spikes_vector_loc))
-		if spikes_vector_loc.shape[0] > 0 and cluster.shape[0] > 0:
-			cluster_vector[spikes_vector_loc==1] = cluster
-		else:
-			cluster_vector = []
+	# 	Return:
+	# 	-----------
+	# 		cluster_vector: numpy vector with same size as signal with the number of the type of cluster on the locations 
+	# 						where peaks were identified (given by spikes_vector_loc), and 0 otherwise.
+	# 	"""
+	# 	spikes_vector_loc = np.asarray(spikes_vector_loc)
+	# 	cluster = np.asarray(cluster)
+	# 	cluster_vector = np.zeros(len(spikes_vector_loc))
+	# 	if spikes_vector_loc.shape[0] > 0 and cluster.shape[0] > 0:
+	# 		cluster_vector[spikes_vector_loc==1] = cluster
+	# 	else:
+	# 		cluster_vector = []
 		
-		return cluster_vector   
-	'''
-	def get_cluster_vector(self, spikes_vector_loc=[], cluster=[]):
-		"""
-		Parameters:
-		-------------
-			spikes_vector_loc: numpy array with same size as signal with 1 where there's a spike and 0 otherwise
-			cluster: vector of length equal to the number of peaks identified, with numbers corresponding to the cluster type (+1 to avoid non-spike).
+	# 	return cluster_vector   
+	# '''
+	# def get_cluster_vector(self, spikes_vector_loc=[], cluster=[]):
+	# 	"""
+	# 	Parameters:
+	# 	-------------
+	# 		spikes_vector_loc: numpy array with same size as signal with 1 where there's a spike and 0 otherwise
+	# 		cluster: vector of length equal to the number of peaks identified, with numbers corresponding to the cluster type (+1 to avoid non-spike).
 	
-		Return:
-		-----------
-			cluster_vector: numpy vector with same size as signal with the number of the type of cluster on the locations 
-							where peaks were identified (given by spikes_vector_loc), and 0 otherwise.
-		"""
-		spikes_vector_loc = np.asarray(spikes_vector_loc)
-		cluster = np.asarray(cluster)
+	# 	Return:
+	# 	-----------
+	# 		cluster_vector: numpy vector with same size as signal with the number of the type of cluster on the locations 
+	# 						where peaks were identified (given by spikes_vector_loc), and 0 otherwise.
+	# 	"""
+	# 	spikes_vector_loc = np.asarray(spikes_vector_loc)
+	# 	cluster = np.asarray(cluster)
 	
-		# Ensure input arrays are valid
-		if spikes_vector_loc.ndim != 1 or cluster.ndim != 1:
-			raise ValueError("Both inputs must be 1D numpy arrays.")
+	# 	# Ensure input arrays are valid
+	# 	if spikes_vector_loc.ndim != 1 or cluster.ndim != 1:
+	# 		raise ValueError("Both inputs must be 1D numpy arrays.")
 	
-		cluster_vector = np.zeros_like(spikes_vector_loc, dtype=int)
+	# 	cluster_vector = np.zeros_like(spikes_vector_loc, dtype=int)
 	
-		if spikes_vector_loc.shape[0] > 0 and cluster.shape[0] > 0:
-			if np.sum(spikes_vector_loc == 1) != cluster.shape[0]:
-				raise ValueError("Mismatch: Number of spikes in 'spikes_vector_loc' does not match 'cluster' length.")
+	# 	if spikes_vector_loc.shape[0] > 0 and cluster.shape[0] > 0:
+	# 		if np.sum(spikes_vector_loc == 1) != cluster.shape[0]:
+	# 			raise ValueError("Mismatch: Number of spikes in 'spikes_vector_loc' does not match 'cluster' length.")
 	
-			cluster_vector[spikes_vector_loc == 1] = cluster
+	# 		cluster_vector[spikes_vector_loc == 1] = cluster
 	
-		return cluster_vector
+	# 	return cluster_vector
 
 	#-------------------------------------------------------------------
 	# Computing metrics from extracted waveforms
