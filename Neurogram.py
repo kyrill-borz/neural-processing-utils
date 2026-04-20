@@ -2039,7 +2039,7 @@ class Recording:
 
 	def compute_isi_distribution_over_time(
 		self,
-		spike_times_ms: np.ndarray,
+		spike_times: np.ndarray,
 		window_seconds: float = 10.0,
 		isi_range_ms: int = 20,
 		bin_size_ms: float = 1.0,
@@ -2058,10 +2058,11 @@ class Recording:
 			- ks_p (optional)
 		"""
 
-		if len(spike_times_ms) < 2:
+		if len(spike_times) < 2:
 			raise ValueError("Not enough spikes to compute ISI.")
 
 		window_period = window_seconds * 1000
+		spike_times_ms = spike_times * 1000
 		max_time = spike_times_ms[-1]
 
 		windows = np.arange(0, max_time, window_period)
@@ -2106,7 +2107,6 @@ class Recording:
 			result["ks_stat"] = ks_stat
 			result["ks_p"] = ks_p
 
-		print(result)
 		return result
 
 	# def gif(self, dataframe, topo_plot, samples, normalize=True, path='', make_contour=False, 
@@ -2321,6 +2321,11 @@ class Recording:
 				signal=signal,
 				method="Median",
 			)
+		elif method == "Laplacian":
+			self.referenced = self.reference_chunked(
+				signal, 
+				method ="Laplacian"
+			)
 		elif method == "Bipolar":
 			self.referenced = self.bipolar_referencing_polars(
 				signal, self.filter_ch
@@ -2336,9 +2341,10 @@ class Recording:
 
 		print("finished applying referencing: %s" % method)
 	
+
 	def reference_chunked(self, signal, method="Mean"):
 		"""
-		Apply Mean or Median referencing. Works with both LazyFrame and DataFrame.
+		Apply Mean, Laplacian, or Median referencing. Works with both LazyFrame and DataFrame.
 		
 		For LazyFrame: Operations stay lazy until collect() is called
 		For DataFrame: Operations execute immediately
@@ -2402,6 +2408,28 @@ class Recording:
 				(pl.col(ch) - pl.lit(medians[ch][0])).alias(ch)
 				for ch in self.filter_ch
 			])
+		elif method == "Laplacian":
+			exprs = []
+			chs = self.filter_ch
+			n = len(chs)
+
+			for i, ch in enumerate(chs):
+				neighbors = []
+
+				for offset in [-2, -1, 1, 2]:
+					j = i + offset
+					if 0 <= j < n:
+						neighbors.append(chs[j])
+
+				if len(neighbors) == 0:
+					exprs.append(pl.col(ch))
+					continue
+
+				neighbor_mean = sum(pl.col(nb) for nb in neighbors) / len(neighbors)
+
+				exprs.append((pl.col(ch) - neighbor_mean).alias(ch))
+
+			return signal.with_columns(exprs)
 		
 		else:
 			raise ValueError(f"Unknown referencing method: {method}")
