@@ -551,7 +551,7 @@ class Recording:
 			)
 			
 		elif filtername == 'Lowpass':
-			print('Applying low pass butter')W
+			print('Applying low pass butter')
 			kargs['fs'] = self.fs
 			sos = signal.butter(**kargs, output='sos')
 			self.filter_ch = channels
@@ -579,7 +579,7 @@ class Recording:
 					]
 				)
 		elif filtername == 'Highpass':
-			print('Applying high pass butter')W
+			print('Applying high pass butter')
 			kargs['fs'] = self.fs
 			sos = signal.butter(**kargs, output='sos')
 			self.filter_ch = channelsW
@@ -2559,7 +2559,7 @@ class Recording:
 		channel: str,
 		height_std: float = 4.0,
 		maximum_height_std: float = 10.0,
-		min_distance_ms: float = 5.0,
+		min_distance_ms: float = 30,
 		use_referenced: bool = True, # Add this flag
 	):
 		"""
@@ -2744,7 +2744,7 @@ class Recording:
 		channel: str,
 		height_std: float = 4.0,
 		maximum_height_std: float = 10.0,
-		min_distance_ms: float = 3.0,
+		min_distance_ms: float = 50.0,
 		waveform_width_ms: float = 2.0,
 		extract_waveforms: bool = True,
 		use_referenced: bool = True, # Pass this through
@@ -2778,7 +2778,7 @@ class Recording:
 				channel=channel,
 				spike_indices=result["indices"].to_numpy(), # Ensure numpy array
 				use_referenced=use_referenced,
-				window_ms=min_distance_ms,
+				window_ms=waveform_width_ms,
 			)
 
 			mean_wf, std_wf = self.compute_average_waveform_polars(waveforms)
