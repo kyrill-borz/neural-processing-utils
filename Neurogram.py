@@ -537,7 +537,6 @@ class Recording:
 			
 		elif filtername == 'Butterworth':
 			print('Applying Butterworth bandpass')
-			print(kargs)
 			kargs['fs'] = self.fs
 			sos = signal.butter(**kargs, output='sos')
 			
@@ -552,12 +551,10 @@ class Recording:
 			)
 			
 		elif filtername == 'Lowpass':
-			print('Applying low pass butter')
-			print(kargs)
+			print('Applying low pass butter')W
 			kargs['fs'] = self.fs
 			sos = signal.butter(**kargs, output='sos')
 			self.filter_ch = channels
-			print(self.filter_ch)
 			
 			# For lazy frames, we can still use map_batches
 			if is_lazy:
@@ -581,7 +578,34 @@ class Recording:
 						for col in self.filter_ch
 					]
 				)
-			print(self.filtered)
+		elif filtername == 'Highpass':
+			print('Applying high pass butter')W
+			kargs['fs'] = self.fs
+			sos = signal.butter(**kargs, output='sos')
+			self.filter_ch = channelsW
+			
+			# For lazy frames, we can still use map_batches
+			if is_lazy:
+				self.filtered = signal2filt.with_columns(
+					[
+						pl.col(col)
+						.map_batches(lambda s: signal.sosfilt(sos, s.to_numpy()))
+						.alias(col)
+						for col in self.filter_ch
+					]
+				)
+			else:
+				# For eager dataframes
+				df = signal2filt.select(self.filter_ch)
+				self.filtered = signal2filt.with_columns(
+					[
+						pl.Series(
+							name=col,
+							values=signal.sosfilt(sos, df[col].to_numpy())
+						)
+						for col in self.filter_ch
+					]
+				)
 			
 		elif filtername == 'butter_non_causal':
 			# Requires eager evaluation - collection happens at method start
