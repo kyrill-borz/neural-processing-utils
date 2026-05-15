@@ -582,7 +582,7 @@ class Recording:
 			print('Applying high pass butter')
 			kargs['fs'] = self.fs
 			sos = signal.butter(**kargs, output='sos')
-			self.filter_ch = channelsW
+			self.filter_ch = channels
 			
 			# For lazy frames, we can still use map_batches
 			if is_lazy:
