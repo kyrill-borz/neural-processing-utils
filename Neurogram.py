@@ -534,6 +534,7 @@ class Recording:
 				fs=self.fs,
 				channels=self.filter_ch
 			)
+			self.filtered = self.filtered.lazy() if is_lazy else self.filtered  # Convert back to lazy if needed
 			
 		elif filtername == 'Butterworth':
 			print('Applying Butterworth bandpass')
@@ -2361,8 +2362,10 @@ class Recording:
 		elif method == "No Referencing":
 			self.referenced = signal
 		else:
+			self.referenced = signal
 			raise NotImplementedError(f"Referencing method '{method}' not implemented")
 
+		self.referenced = self.referenced.lazy()
 		print("finished applying referencing: %s" % method)
 	
 
@@ -2755,6 +2758,14 @@ class Recording:
 		print("detecting spikes")
 		
 		# PASS THE FLAG: Detect on the same signal we will extract from
+		source = self.referenced if use_referenced else self.filtered
+
+		if channel not in source:
+			return {
+				"waveforms": None, "mean_waveform": None, "std_waveform": None,
+				"durations_samples": None, "isi_ms": None,
+			}
+
 		result = self.detect_spikes_single_channel_polars(
 			channel=channel,
 			height_std=height_std,
@@ -2800,7 +2811,8 @@ class Recording:
 		channels: list[str],
 		height_std: float = 4.0,
 		maximum_height_std: float = 10.0,
-		min_distance_ms: float = 3.0,
+		min_distance_ms: float = 30.0,
+		window_ms: float = 2.0,
 		extract_waveforms: bool = True,
 		use_referenced: bool = True,  # <-- propagate this
 	):
@@ -2825,8 +2837,9 @@ class Recording:
 				height_std=height_std,
 				maximum_height_std=maximum_height_std,
 				min_distance_ms=min_distance_ms,
+				waveform_width_ms=window_ms,
 				extract_waveforms=extract_waveforms,
-				use_referenced=use_referenced,  # <-- critical for consistency
+				use_referenced=use_referenced, 
 			)
 
 			# Normalize empty case to match previous multi-channel contract
