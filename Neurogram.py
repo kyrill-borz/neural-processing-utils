@@ -2066,22 +2066,10 @@ class Recording:
 		self,
 		spike_times: np.ndarray,
 		window_seconds: float = 10.0,
-		isi_range_ms: int = 20,
+		isi_range_ms: int = 200,
 		bin_size_ms: float = 1.0,
 		perform_ks_test: bool = True,
 	):
-		"""
-		Compute windowed ISI distribution matrix and optional Poisson KS test.
-
-		Returns
-		-------
-		dict with:
-			- isi_matrix (2D array)
-			- window_centers_sec
-			- isi_bins_ms
-			- ks_stat (optional)
-			- ks_p (optional)
-		"""
 
 		if len(spike_times) < 2:
 			raise ValueError("Not enough spikes to compute ISI.")
@@ -2090,6 +2078,9 @@ class Recording:
 		spike_times_ms = spike_times * 1000
 		max_time = spike_times_ms[-1]
 
+		print("isi_range_ms:", isi_range_ms)
+		print("bin_size_ms:", bin_size_ms)
+
 		windows = np.arange(0, max_time, window_period)
 
 		isi_windows = []
@@ -2097,22 +2088,38 @@ class Recording:
 
 		for start in windows:
 			end = start + window_period
-			mask = (spike_times_ms >= start) & (spike_times_ms < end)
+
+			mask = (
+				(spike_times_ms >= start)
+				& (spike_times_ms < end)
+			)
+
 			spikes_in_window = spike_times_ms[mask]
 
 			if len(spikes_in_window) > 1:
 				isi = np.diff(spikes_in_window)
-				isi_windows.append(isi)
-				window_centers.append(start + window_period / 2)
 
-		# Histogram bins
-		bins = np.arange(0, isi_range_ms + bin_size_ms, bin_size_ms)
+				if len(isi) > 0:
+					isi_windows.append(isi)
+					window_centers.append(
+						start + window_period / 2
+					)
 
-		isi_matrix = np.zeros((len(isi_windows), len(bins) - 1))
+		bins = np.arange(
+			0,
+			isi_range_ms + bin_size_ms,
+			bin_size_ms,
+		)
 
-		for i, isi in enumerate(isi_windows):
-			hist, _ = np.histogram(isi, bins=bins)
-			isi_matrix[i, :] = hist
+		histograms = [
+			np.histogram(isi, bins=bins)[0]
+			for isi in isi_windows
+		]
+
+		if len(histograms) == 0:
+			isi_matrix = np.empty((0, len(bins) - 1))
+		else:
+			isi_matrix = np.vstack(histograms)
 
 		result = {
 			"isi_matrix": isi_matrix,
@@ -2120,14 +2127,25 @@ class Recording:
 			"isi_bins_ms": bins[:-1],
 		}
 
-		# Optional KS test on full ISI distribution
 		if perform_ks_test:
+
 			full_isi = np.diff(spike_times_ms)
+			full_isi = full_isi[full_isi > 0]
+
+			if len(full_isi) == 0:
+				raise ValueError("No positive ISIs available.")
 
 			lambda_rate = 1 / np.mean(full_isi)
-			simulated_isi = expon.rvs(scale=1 / lambda_rate, size=len(full_isi))
 
-			ks_stat, ks_p = ks_2samp(full_isi, simulated_isi)
+			simulated_isi = expon.rvs(
+				scale=1 / lambda_rate,
+				size=len(full_isi),
+			)
+
+			ks_stat, ks_p = ks_2samp(
+				full_isi,
+				simulated_isi,
+			)
 
 			result["ks_stat"] = ks_stat
 			result["ks_p"] = ks_p
