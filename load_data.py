@@ -1661,9 +1661,12 @@ def load_data_multich(path, start=0, dur=None, port='Port B', load_from_file=Fal
 
         else:
             # Single file loading
-            filepath_init = askopenfile(initialdir=path, title="Select data file (.mat or .rhs)",
-                                    filetypes=[("rhs", ".rhs"), ("matlab", ".mat")])
-            filepath_init = filepath_init.name
+            if path is None:
+                filepath_init = askopenfile(initialdir=path, title="Select data file (.mat or .rhs)",
+                                        filetypes=[("rhs", ".rhs"), ("matlab", ".mat")])
+                filepath_init = filepath_init.name
+            else:
+                filepath_init = path
 
             if filepath_init.endswith('.mat'):
                 data = scipy.io.loadmat(filepath_init)
