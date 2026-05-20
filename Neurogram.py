@@ -2780,7 +2780,11 @@ class Recording:
 
 		if channel not in source:
 			return {
-				"waveforms": None, "mean_waveform": None, "std_waveform": None,
+				"indices": None,
+			"times": None,
+			"peaks": None,
+			"threshold": None,
+			"waveforms": None, "mean_waveform": None, "std_waveform": None,
 				"durations_samples": None, "isi_ms": None,
 			}
 
@@ -3203,14 +3207,16 @@ class Recording:
 			for ch in available_channels
 		}
 
-		# Adjacent pairs only
-		adjacent_pairs = list(zip(available_channels[:-1], available_channels[1:]))
-		# Distance lookup
+		# All unique channel pairs (order preserved along probe)
+		import itertools
+		all_pairs = list(itertools.combinations(available_channels, 2))
+
+		# Distance lookup for all pairs
 		electrode_distances = {
 			(ch1, ch2): abs(
 				ordered_positions[ch1] - ordered_positions[ch2]
 			)
-			for ch1, ch2 in adjacent_pairs
+			for ch1, ch2 in all_pairs
 		}
 
 		# Histogram bins
@@ -3226,7 +3232,7 @@ class Recording:
 
 		pi_storage = {
 			pair: []
-			for pair in adjacent_pairs
+			for pair in all_pairs
 		}
 		for start in range(0, total_end - window_length_ms + 1, step_size_ms):
 			
@@ -3240,7 +3246,7 @@ class Recording:
 				for ch, spikes in spike_times_ms.items()
 			}
 
-			for ch1, ch2 in adjacent_pairs:
+			for ch1, ch2 in all_pairs:
 
 				spikes1 = spikes_window.get("ch_" + str(ch1), [])
 				spikes2 = np.array(spikes_window.get("ch_" + str(ch2), []))
@@ -3280,7 +3286,7 @@ class Recording:
 		print("PI_storage:", pi_storage)
 		return {
 			"periods_min": periods_min,
-			"pairs": adjacent_pairs,
+			"pairs": all_pairs,
 			"pi_storage": pi_storage,
 			"distances": list(set(electrode_distances.values())),
 			"electrode_distances": electrode_distances
